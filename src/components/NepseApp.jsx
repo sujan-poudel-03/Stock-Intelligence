@@ -1,0 +1,332 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { dbGet, dbSet, dbRemove } from '@/lib/clientStorage';
+
+// ============================================================================
+// NEPSE Intelligence V2 — UI shell
+//
+// This is the SHELL ONLY. The full V1 UI will be pasted in by the maintainer.
+// What is already wired up for you (do not remove):
+//   - clientStorage (dbGet/dbSet/dbRemove) replaces V1 window.storage
+//   - "Scan now" button       -> POST /api/cron/scan
+//   - status polling          -> GET  /api/scan/status every 5s while running
+//   - header live progress    -> "3/15 NABIL"
+//   - failed-job retry         -> POST /api/scan/worker?symbol=X&force=true
+//   - partial-scan amber banner
+//   - exchange selector        -> NEPSE (active) | NYSE (coming Level 2)
+//
+// PORT V1 UI INTO THE MARKED REGIONS BELOW. The client-side scan loop from V1
+// must NOT be re-added — scanning now happens server-side.
+// ============================================================================
+
+const POLL_MS = 5000;
+const KEY_BRIEF = 'ni:brief';
+const KEY_WATCHLIST = 'ni:wl';
+
+export default function NepseApp() {
+  const [exchange, setExchange] = useState('NEPSE');
+  const [tab, setTab] = useState('today');
+
+  const [status, setStatus] = useState(null); // /api/scan/status payload
+  const [brief, setBrief] = useState(null);
+  const [watchlist, setWatchlist] = useState([]);
+  const [activity, setActivity] = useState([]); // simple completion log
+  const [scanStarting, setScanStarting] = useState(false);
+
+  const pollRef = useRef(null);
+  const lastSymbolRef = useRef(null);
+
+  const log = useCallback((msg) => {
+    setActivity((prev) => [{ t: Date.now(), msg }, ...prev].slice(0, 50));
+  }, []);
+
+  // --- initial load from KV ------------------------------------------------
+  useEffect(() => {
+    (async () => {
+      const [b, wl] = await Promise.all([dbGet(KEY_BRIEF), dbGet(KEY_WATCHLIST)]);
+      if (b) setBrief(b);
+      if (Array.isArray(wl)) setWatchlist(wl);
+      else if (Array.isArray(wl?.symbols)) setWatchlist(wl.symbols);
+    })();
+  }, []);
+
+  // --- status polling ------------------------------------------------------
+  const pollStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/scan/status', { cache: 'no-store' });
+      const data = await res.json();
+      setStatus(data);
+
+      // Log each newly completed stock as it appears.
+      if (data.current_symbol && data.current_symbol !== lastSymbolRef.current) {
+        lastSymbolRef.current = data.current_symbol;
+        log(`Scanning ${data.current_symbol} (${data.completed}/${data.total})`);
+      }
+
+      // When the scan stops running, refresh the brief and stop polling.
+      if (!data.running) {
+        stopPolling();
+        const b = await dbGet(KEY_BRIEF);
+        if (b) setBrief(b);
+        log('Scan finished');
+      }
+    } catch (err) {
+      console.error('status poll failed:', err);
+    }
+  }, [log]);
+
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return;
+    pollStatus();
+    pollRef.current = setInterval(pollStatus, POLL_MS);
+  }, [pollStatus]);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  // Resume polling on mount if a scan is already running server-side.
+  useEffect(() => {
+    (async () => {
+      const res = await fetch('/api/scan/status', { cache: 'no-store' });
+      const data = await res.json();
+      setStatus(data);
+      if (data.running) startPolling();
+    })();
+    return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- actions -------------------------------------------------------------
+  const scanNow = useCallback(async () => {
+    setScanStarting(true);
+    try {
+      const res = await fetch('/api/cron/scan', { method: 'POST' });
+      const data = await res.json();
+      if (data.skipped) {
+        log('Scan already in progress');
+      } else if (data.started) {
+        log(`Scan started — ${data.total} stocks (${data.sentiment || 'NEUTRAL'})`);
+      } else if (data.error) {
+        log(`Scan error: ${data.error}`);
+      }
+      startPolling();
+    } catch (err) {
+      log(`Scan failed to start: ${err.message}`);
+    } finally {
+      setScanStarting(false);
+    }
+  }, [log, startPolling]);
+
+  const retryStock = useCallback(
+    async (symbol) => {
+      log(`Retrying ${symbol}…`);
+      await fetch(`/api/scan/worker?symbol=${encodeURIComponent(symbol)}&force=true`, {
+        method: 'POST',
+      });
+      startPolling();
+    },
+    [log, startPolling]
+  );
+
+  const running = status?.running;
+  const progressLabel = running
+    ? `${status.completed ?? 0}/${status.total ?? 0}${status.current_symbol ? ` ${status.current_symbol}` : ''}`
+    : null;
+  const isPartial = status?.status === 'partial';
+  const failedJobs = status?.failed_jobs || [];
+
+  // ------------------------------------------------------------------------
+  return (
+    <main style={S.page}>
+      {/* ===== HEADER ===== */}
+      <header style={S.header}>
+        <div style={S.brandRow}>
+          <h1 style={S.brand}>NEPSE Intelligence <span style={S.v2}>V2</span></h1>
+
+          {/* Exchange selector: NEPSE active, NYSE coming in Level 2 */}
+          <div style={S.exchanges}>
+            <button
+              onClick={() => setExchange('NEPSE')}
+              style={{ ...S.exBtn, ...(exchange === 'NEPSE' ? S.exActive : {}) }}
+            >
+              NEPSE
+            </button>
+            <button
+              disabled
+              title="Coming in Level 2"
+              style={{ ...S.exBtn, ...S.exDisabled }}
+            >
+              NYSE <span style={S.soon}>soon</span>
+            </button>
+          </div>
+        </div>
+
+        <div style={S.headerRight}>
+          {running && (
+            <span style={S.progress}>
+              <span style={S.spinner} /> {progressLabel}
+              {status?.stalled ? <span style={S.stalled}> (stalled)</span> : null}
+            </span>
+          )}
+          <button onClick={scanNow} disabled={scanStarting || running} style={S.scanBtn}>
+            {running ? 'Scanning…' : scanStarting ? 'Starting…' : 'Scan now'}
+          </button>
+        </div>
+      </header>
+
+      {/* ===== PARTIAL-SCAN AMBER BANNER (Today tab) ===== */}
+      {isPartial && tab === 'today' && (
+        <div style={S.amberBanner}>
+          ⚠️ Partial scan — {failedJobs.length} stock{failedJobs.length === 1 ? '' : 's'} failed.
+          Retry them from the Watchlist tab.
+        </div>
+      )}
+
+      {/* ===== TABS ===== */}
+      <nav style={S.tabs}>
+        {['today', 'watchlist', 'activity'].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            style={{ ...S.tab, ...(tab === t ? S.tabActive : {}) }}
+          >
+            {t[0].toUpperCase() + t.slice(1)}
+          </button>
+        ))}
+      </nav>
+
+      {/* ===== CONTENT ===== */}
+      <section style={S.content}>
+        {tab === 'today' && (
+          <div>
+            {/* ----------------------------------------------------------------
+                PORT V1 "TODAY" UI HERE.
+                Available data: `brief` (from KV ni:brief), `status`.
+                ---------------------------------------------------------------- */}
+            <Placeholder title="Today">
+              {brief ? (
+                <div>
+                  <h3 style={S.h3}>{brief.headline}</h3>
+                  <p style={S.muted}>{brief.summary}</p>
+                  {brief.topPicks?.length ? (
+                    <p>Top picks: <strong>{brief.topPicks.join(', ')}</strong></p>
+                  ) : null}
+                  {brief.risks ? <p style={S.muted}>Risks: {brief.risks}</p> : null}
+                </div>
+              ) : (
+                <p style={S.muted}>No brief yet. Run a scan to generate one.</p>
+              )}
+            </Placeholder>
+          </div>
+        )}
+
+        {tab === 'watchlist' && (
+          <div>
+            {/* ----------------------------------------------------------------
+                PORT V1 "WATCHLIST" UI HERE.
+                Failed stocks render a red badge + retry button (wired below).
+                Use dbSet(KEY_WATCHLIST, ...) to persist edits.
+                ---------------------------------------------------------------- */}
+            <Placeholder title="Watchlist">
+              {failedJobs.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  {failedJobs.map((j) => (
+                    <div key={j.symbol} style={S.failRow}>
+                      <span style={S.failBadge}>FAILED</span>
+                      <strong>{j.symbol}</strong>
+                      <span style={S.muted}> attempt {j.attempt} — {j.error}</span>
+                      <button style={S.retryBtn} onClick={() => retryStock(j.symbol)}>
+                        Retry
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {watchlist.length ? (
+                <ul style={S.list}>
+                  {watchlist.map((s) => (
+                    <li key={typeof s === 'string' ? s : s.symbol}>
+                      {typeof s === 'string' ? s : s.symbol}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={S.muted}>Watchlist empty.</p>
+              )}
+            </Placeholder>
+          </div>
+        )}
+
+        {tab === 'activity' && (
+          <div>
+            {/* ----------------------------------------------------------------
+                Activity log — shows each stock as it completes.
+                ---------------------------------------------------------------- */}
+            <Placeholder title="Activity">
+              {activity.length ? (
+                <ul style={S.logList}>
+                  {activity.map((a) => (
+                    <li key={a.t} style={S.logItem}>
+                      <span style={S.muted}>{new Date(a.t).toLocaleTimeString()}</span> — {a.msg}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={S.muted}>No activity yet.</p>
+              )}
+            </Placeholder>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function Placeholder({ title, children }) {
+  return (
+    <div style={S.panel}>
+      <div style={S.panelLabel}>{title} — V1 UI goes here</div>
+      {children}
+    </div>
+  );
+}
+
+// Inline styles keep the shell self-contained until the V1 UI (with its own
+// styling) is pasted in.
+const S = {
+  page: { maxWidth: 920, margin: '0 auto', padding: '20px 16px 64px' },
+  header: { display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 },
+  brandRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 },
+  brand: { fontSize: 22, margin: 0, fontWeight: 700 },
+  v2: { color: 'var(--accent)', fontWeight: 800 },
+  exchanges: { display: 'flex', gap: 6 },
+  exBtn: { padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--panel)', color: 'var(--muted)', cursor: 'pointer', fontSize: 13 },
+  exActive: { color: 'var(--text)', borderColor: 'var(--accent)', background: '#10203f' },
+  exDisabled: { opacity: 0.5, cursor: 'not-allowed' },
+  soon: { fontSize: 10, color: 'var(--amber)', marginLeft: 4 },
+  headerRight: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
+  progress: { display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--muted)', fontSize: 14 },
+  spinner: { width: 10, height: 10, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' },
+  stalled: { color: 'var(--amber)' },
+  scanBtn: { padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 600, cursor: 'pointer' },
+  amberBanner: { background: '#3a2c10', border: '1px solid var(--amber)', color: 'var(--amber)', padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: 14 },
+  tabs: { display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16 },
+  tab: { padding: '8px 14px', background: 'transparent', border: 'none', borderBottom: '2px solid transparent', color: 'var(--muted)', cursor: 'pointer', fontSize: 14 },
+  tabActive: { color: 'var(--text)', borderBottomColor: 'var(--accent)' },
+  content: {},
+  panel: { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 },
+  panelLabel: { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 12 },
+  h3: { margin: '0 0 6px' },
+  muted: { color: 'var(--muted)' },
+  list: { margin: 0, paddingLeft: 18 },
+  logList: { listStyle: 'none', margin: 0, padding: 0 },
+  logItem: { padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 },
+  failRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', flexWrap: 'wrap' },
+  failBadge: { background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4 },
+  retryBtn: { marginLeft: 'auto', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontSize: 12 },
+};

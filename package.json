@@ -1,0 +1,30 @@
+{
+  "name": "nepse-intelligence-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "NEPSE Intelligence V2 — autonomous NEPSE trading agent",
+  "scripts": {
+    "predev": "node scripts/preflight.mjs --mode=startup",
+    "dev": "next dev",
+    "build": "next build",
+    "prestart": "node scripts/preflight.mjs --mode=startup",
+    "start": "next start",
+    "lint": "next lint",
+    "doctor": "node scripts/preflight.mjs --mode=doctor"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "@google/genai": "^1.52.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "@vercel/functions": "^1.5.0",
+    "next": "14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "resend": "^4.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.15",
+    "supabase": "^2.106.0"
+  }
+}
