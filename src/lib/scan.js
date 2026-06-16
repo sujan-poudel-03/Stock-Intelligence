@@ -200,7 +200,11 @@ Return ONLY JSON:
     system: 'You are a NEPSE market brief writer. Return only valid JSON.',
   });
 
-  const brief = parseJson(text) || {};
+  // Budget exhausted / LLM unavailable -> build a useful brief from the signals
+  // we already have, so the scan still finishes with output (never blank).
+  const brief = parseJson(text);
+  if (!brief) return deterministicBrief(signals, marketData);
+
   return {
     headline: brief.headline || 'NEPSE daily brief',
     summary: brief.summary || '',
@@ -208,6 +212,33 @@ Return ONLY JSON:
     watch: Array.isArray(brief.watch) ? brief.watch : [],
     risks: brief.risks || '',
     stale: Array.isArray(brief.stale) ? brief.stale : [],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// Build a brief from signals without an LLM call (used when the daily budget is
+// spent). Deterministic so the scan always produces something actionable.
+function deterministicBrief(signals = [], marketData = {}) {
+  const rank = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+  const buys = signals.filter((s) => s.signal === 'BUY');
+  const topPicks = buys
+    .slice()
+    .sort((a, b) => (rank[b.confidence] || 0) - (rank[a.confidence] || 0))
+    .slice(0, 3)
+    .map((s) => s.symbol);
+  const watch = signals
+    .filter((s) => s.signal === 'HOLD' || s.confidence === 'MEDIUM')
+    .map((s) => s.symbol)
+    .slice(0, 8);
+  const sentiment = marketData?.sentiment || 'NEUTRAL';
+
+  return {
+    headline: `NEPSE ${sentiment} — ${signals.length} signal${signals.length === 1 ? '' : 's'} (auto-summary)`,
+    summary: `Brief generated without LLM (daily call budget reached). ${buys.length} BUY and ${signals.length - buys.length} other signal(s) from this scan.`,
+    topPicks,
+    watch,
+    risks: 'Budget-limited scan — review signals individually; brief was generated deterministically.',
+    stale: [],
     generatedAt: new Date().toISOString(),
   };
 }

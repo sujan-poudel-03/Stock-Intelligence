@@ -44,6 +44,7 @@ export const POST = withGuard(async (request) => {
     .map((j) => j.result);
 
   const failures = (jobs || []).filter((j) => j.status === 'permanently_failed');
+  const skipped = (jobs || []).filter((j) => j.status === 'skipped');
 
   const { data: scan } = await supabase.from('scans').select('market').eq('id', scanId).maybeSingle();
   const portfolio = await loadPortfolio(supabase);
@@ -70,7 +71,7 @@ export const POST = withGuard(async (request) => {
   }
 
   // 5. Mark the scan done / partial.
-  const status = failures.length > 0 ? 'partial' : 'done';
+  const status = failures.length > 0 || skipped.length > 0 ? 'partial' : 'done';
   await supabase
     .from('scans')
     .update({
@@ -97,6 +98,7 @@ export const POST = withGuard(async (request) => {
     status,
     signals: doneSignals.length,
     failed: failures.length,
+    skipped: skipped.length,
     brief,
   });
 });

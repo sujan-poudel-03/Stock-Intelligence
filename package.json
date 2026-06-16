@@ -5,10 +5,10 @@
   "description": "NEPSE Intelligence V2 — autonomous NEPSE trading agent",
   "scripts": {
     "predev": "node scripts/preflight.mjs --mode=startup",
-    "dev": "next dev",
+    "dev": "next dev -p 3001",
     "build": "next build",
     "prestart": "node scripts/preflight.mjs --mode=startup",
-    "start": "next start",
+    "start": "next start -p 3001",
     "lint": "next lint",
     "doctor": "node scripts/preflight.mjs --mode=doctor"
   },

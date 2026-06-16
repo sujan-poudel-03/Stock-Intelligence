@@ -9,6 +9,7 @@ import {
   SCAN_GUARD_MS,
   checkCronAuth,
 } from '@/lib/constants';
+import { remaining } from '@/lib/budget';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -78,7 +79,24 @@ async function handle(request) {
     console.error('discovery failed:', err?.message || err);
   }
 
-  const symbols = [...new Set([...watchlist, ...discovered].map((s) => s.toUpperCase()))];
+  const allSymbols = [...new Set([...watchlist, ...discovered].map((s) => s.toUpperCase()))];
+
+  // Fit the scan inside the remaining daily LLM budget. Reserve a few calls for
+  // the brief + outcomes steps; each stock costs ~2 calls. Drop the overflow up
+  // front (logged, not silent) instead of queuing work that would only be
+  // skipped — the worker still budget-checks each job as a backstop.
+  const BUDGET_RESERVE = 2; // brief + outcomes
+  const CALLS_PER_STOCK = 2;
+  const budgetLeft = await remaining();
+  const affordable = Math.max(0, Math.floor((budgetLeft - BUDGET_RESERVE) / CALLS_PER_STOCK));
+  const symbols = allSymbols.slice(0, affordable);
+  const droppedForBudget = allSymbols.slice(affordable);
+  if (droppedForBudget.length) {
+    console.warn(
+      `[scan] budget cap: queuing ${symbols.length}/${allSymbols.length} symbols ` +
+        `(${budgetLeft} calls left). Dropped: ${droppedForBudget.join(', ')}`
+    );
+  }
 
   await supabase
     .from('scans')
@@ -107,10 +125,16 @@ async function handle(request) {
 
   await supabase.from('scans').update({ status: 'running', phase: 'stocks' }).eq('id', scanId);
 
-  // 5. Kick off the worker (fire and forget).
-  triggerRoute('/api/scan/worker', {
-    headers: process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {},
-  });
+  const auth = process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {};
+  const origin = request.nextUrl.origin;
+
+  // 5. Kick off processing. If the budget left no symbols to queue, skip the
+  // worker entirely and go straight to the brief so the scan still completes.
+  if (jobs.length) {
+    triggerRoute('/api/scan/worker', { headers: auth, origin });
+  } else {
+    triggerRoute('/api/scan/brief', { headers: auth, body: { scan_id: scanId }, origin });
+  }
 
   // 6. Return immediately (well within 60s).
   return NextResponse.json({

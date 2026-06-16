@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { withGuard } from '@/lib/respond';
 import { STALL_MS } from '@/lib/constants';
+import { humanizeError } from '@/lib/humanizeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export const GET = withGuard(async () => {
       eta_minutes: null,
       stalled: false,
       failed_jobs: [],
+      skipped_jobs: [],
       last_updated: null,
     });
   }
@@ -44,7 +46,8 @@ export const GET = withGuard(async () => {
   const all = jobs || [];
   const done = all.filter((j) => j.status === 'done').length;
   const failed = all.filter((j) => j.status === 'permanently_failed');
-  const completed = done + failed.length;
+  const skipped = all.filter((j) => j.status === 'skipped');
+  const completed = done + failed.length + skipped.length;
   const total = scan.total || all.length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
@@ -72,7 +75,14 @@ export const GET = withGuard(async () => {
     signals_so_far: signalCount || 0,
     eta_minutes: etaMinutes,
     stalled,
-    failed_jobs: failed.map((j) => ({ symbol: j.symbol, error: j.error, attempt: j.attempt })),
+    failed_jobs: failed.map((j) => {
+      const h = humanizeError(j.error);
+      return { symbol: j.symbol, attempt: j.attempt, kind: h.kind, message: h.message };
+    }),
+    skipped_jobs: skipped.map((j) => {
+      const h = humanizeError(j.error);
+      return { symbol: j.symbol, kind: h.kind, message: h.message };
+    }),
     last_updated: lastUpdated,
   });
 });

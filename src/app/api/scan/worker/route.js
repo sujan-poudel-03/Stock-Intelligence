@@ -5,6 +5,10 @@ import { getWeightContext } from '@/lib/calibration';
 import { runBackground, triggerRoute } from '@/lib/background';
 import { withGuard } from '@/lib/respond';
 import { STALE_JOB_MS, MAX_ATTEMPTS, checkCronAuth } from '@/lib/constants';
+import { remaining } from '@/lib/budget';
+
+// A full stock scan costs ~2 LLM calls (live-data fetch + signal generation).
+const CALLS_PER_STOCK = 2;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -28,8 +32,10 @@ export const POST = withGuard(async (request) => {
     return NextResponse.json({ idle: true });
   }
 
-  // Respond immediately; process in the background (await locally).
-  await runBackground(() => processJob(supabase, job));
+  // Respond immediately; process in the background (await locally). Carry the
+  // request origin so the self-chain targets the dev server's actual port.
+  const origin = request.nextUrl.origin;
+  await runBackground(() => processJob(supabase, job, origin));
 
   return NextResponse.json({ claimed: job.symbol, job_id: job.id });
 });
@@ -81,8 +87,24 @@ async function claimJob(supabase, { symbol, force }) {
   return null;
 }
 
-async function processJob(supabase, job) {
+async function processJob(supabase, job, origin) {
   const scanId = job.scan_id;
+
+  // Budget-aware skip: if we can't afford a full stock scan, skip cleanly so the
+  // run finishes as 'partial' instead of producing a junk signal or 429-failing.
+  if ((await remaining()) < CALLS_PER_STOCK) {
+    await supabase
+      .from('scan_jobs')
+      .update({
+        status: 'skipped',
+        error: 'daily LLM budget reached',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', job.id);
+    await chainNext(supabase, scanId, origin);
+    return;
+  }
+
   try {
     // Pull market context for this scan.
     const { data: scan } = await supabase
@@ -153,7 +175,7 @@ async function processJob(supabase, job) {
   }
 
   // Chain: more work -> next worker; otherwise -> brief.
-  await chainNext(supabase, scanId);
+  await chainNext(supabase, scanId, origin);
 }
 
 // Increment scans.completed or scans.failed by reading + writing (no RPC needed).
@@ -164,7 +186,7 @@ async function bumpCompleted(supabase, scanId, field) {
   await supabase.from('scans').update({ completed, failed }).eq('id', scanId);
 }
 
-async function chainNext(supabase, scanId) {
+async function chainNext(supabase, scanId, origin) {
   const auth = process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {};
 
   const { count: pendingCount } = await supabase
@@ -174,8 +196,8 @@ async function chainNext(supabase, scanId) {
     .in('status', ['pending', 'running']);
 
   if ((pendingCount || 0) > 0) {
-    triggerRoute('/api/scan/worker', { headers: auth });
+    triggerRoute('/api/scan/worker', { headers: auth, origin });
   } else {
-    triggerRoute('/api/scan/brief', { headers: auth, body: { scan_id: scanId } });
+    triggerRoute('/api/scan/brief', { headers: auth, body: { scan_id: scanId }, origin });
   }
 }

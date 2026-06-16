@@ -139,6 +139,7 @@ export default function NepseApp() {
     : null;
   const isPartial = status?.status === 'partial';
   const failedJobs = status?.failed_jobs || [];
+  const skippedJobs = status?.skipped_jobs || [];
 
   // ------------------------------------------------------------------------
   return (
@@ -182,8 +183,12 @@ export default function NepseApp() {
       {/* ===== PARTIAL-SCAN AMBER BANNER (Today tab) ===== */}
       {isPartial && tab === 'today' && (
         <div style={S.amberBanner}>
-          ⚠️ Partial scan — {failedJobs.length} stock{failedJobs.length === 1 ? '' : 's'} failed.
-          Retry them from the Watchlist tab.
+          ⚠️ Partial scan —
+          {failedJobs.length > 0 &&
+            ` ${failedJobs.length} failed${skippedJobs.length ? ',' : '.'}`}
+          {skippedJobs.length > 0 &&
+            ` ${skippedJobs.length} skipped (AI quota).`}
+          {' '}Review them on the Watchlist tab.
         </div>
       )}
 
@@ -233,13 +238,26 @@ export default function NepseApp() {
                 Use dbSet(KEY_WATCHLIST, ...) to persist edits.
                 ---------------------------------------------------------------- */}
             <Placeholder title="Watchlist">
-              {failedJobs.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
+              {(failedJobs.length > 0 || skippedJobs.length > 0) && (
+                <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {failedJobs.map((j) => (
-                    <div key={j.symbol} style={S.failRow}>
+                    <div key={`f-${j.symbol}`} style={S.statusRow}>
                       <span style={S.failBadge}>FAILED</span>
-                      <strong>{j.symbol}</strong>
-                      <span style={S.muted}> attempt {j.attempt} — {j.error}</span>
+                      <strong style={S.rowSymbol}>{j.symbol}</strong>
+                      <span style={S.rowMsg} title={j.message}>
+                        {j.message}
+                        {j.attempt > 1 ? ` (after ${j.attempt} tries)` : ''}
+                      </span>
+                      <button style={S.retryBtn} onClick={() => retryStock(j.symbol)}>
+                        Retry
+                      </button>
+                    </div>
+                  ))}
+                  {skippedJobs.map((j) => (
+                    <div key={`s-${j.symbol}`} style={S.statusRow}>
+                      <span style={S.skipBadge}>SKIPPED</span>
+                      <strong style={S.rowSymbol}>{j.symbol}</strong>
+                      <span style={S.rowMsg} title={j.message}>{j.message}</span>
                       <button style={S.retryBtn} onClick={() => retryStock(j.symbol)}>
                         Retry
                       </button>
@@ -326,7 +344,10 @@ const S = {
   list: { margin: 0, paddingLeft: 18 },
   logList: { listStyle: 'none', margin: 0, padding: 0 },
   logItem: { padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 },
-  failRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', flexWrap: 'wrap' },
-  failBadge: { background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4 },
-  retryBtn: { marginLeft: 'auto', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontSize: 12 },
+  statusRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8 },
+  failBadge: { flexShrink: 0, background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, letterSpacing: 0.3 },
+  skipBadge: { flexShrink: 0, background: 'var(--amber)', color: '#1a1303', fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, letterSpacing: 0.3 },
+  rowSymbol: { flexShrink: 0 },
+  rowMsg: { color: 'var(--muted)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 },
+  retryBtn: { flexShrink: 0, marginLeft: 'auto', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontSize: 12 },
 };

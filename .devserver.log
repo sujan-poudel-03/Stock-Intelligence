@@ -1,0 +1,74 @@
+
+> nepse-intelligence-v2@2.0.0 predev
+> node scripts/preflight.mjs --mode=startup
+
+
+NEPSE Intelligence — preflight
+  mode: startup · provider: gemini
+
+Environment
+✓ SUPABASE_URL set
+✓ SUPABASE_ANON_KEY set
+✓ GEMINI_API_KEY set
+
+Database
+✓ Supabase reachable, key authenticated
+✓ Tables present: kv_store, signals, scans, scan_jobs, weights, outcomes, alerts
+✓ All expected tables exist.
+
+LLM (gemini)
+✓ gemini responding (HTTP 200)
+
+✓ Preflight complete.
+
+> nepse-intelligence-v2@2.0.0 dev
+> next dev
+
+  ▲ Next.js 14.2.15
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1187ms
+ ○ Compiling / ...
+ ✓ Compiled / in 1500ms (463 modules)
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET / 200 in 1549ms
+ GET /_next/static/webpack/228785c31af33d65.webpack.hot-update.json 404 in 1584ms
+ GET / 200 in 70ms
+ ✓ Compiled /api/storage in 209ms (298 modules)
+ ✓ Compiled (300 modules)
+ GET /api/storage?key=ni%3Awl 200 in 884ms
+ GET /api/storage?key=ni%3Abrief 200 in 886ms
+ GET /api/storage?key=ni%3Abrief 200 in 188ms
+ GET /api/storage?key=ni%3Awl 200 in 188ms
+ GET /api/scan/status 200 in 1251ms
+ GET /api/scan/status 200 in 1445ms
+ GET / 200 in 81ms
+ GET /api/scan/status 200 in 8ms
+ GET /api/v1/auth/tenant-info?slug=nepa-robotics 404 in 42ms
+ OPTIONS /api/v1/platform-auth/login 404 in 65ms
+ OPTIONS /api/v1/platform-auth/login 404 in 78ms
+ OPTIONS /api/v1/platform-auth/login 404 in 68ms
+ OPTIONS /api/v1/platform-auth/login 404 in 73ms
+ OPTIONS /api/v1/platform-auth/login 404 in 56ms
+ OPTIONS /api/v1/platform-auth/login 404 in 55ms
+ OPTIONS /api/v1/platform-auth/login 404 in 40ms
+ OPTIONS /api/v1/platform-auth/login 404 in 76ms
+ OPTIONS /api/v1/platform-auth/login 404 in 73ms
+ OPTIONS /api/v1/platform-auth/login 404 in 54ms
+ OPTIONS /api/v1/platform-auth/login 404 in 57ms
+ OPTIONS /api/v1/platform-auth/login 404 in 27ms
+ GET /api/v1/auth/tenant-info?slug=nepa-robotics 404 in 71ms
+ GET /api/v1/auth/tenant-info?slug=nepa-robotics 404 in 75ms
+ OPTIONS /api/v1/platform-auth/login 404 in 54ms
+ OPTIONS /api/v1/platform-auth/login 404 in 40ms
+ OPTIONS /api/v1/platform-auth/login 404 in 59ms
+ OPTIONS /api/v1/platform-auth/login 404 in 63ms
+ OPTIONS /api/v1/platform-auth/login 404 in 37ms
+ ○ Compiling /api/cron/scan ...
+ ✓ Compiled /api/cron/scan in 952ms (514 modules)
+ POST /api/cron/scan 200 in 17022ms
+[scan] budget cap: queuing 0/14 symbols (2 calls left). Dropped: NABIL, NICA, UPPER, HDL, CHCL, SHIVM, APHL, SOPL, GRDBL, SAND2085, SIGS3, HDHPC, SIGS2, IHL
+ ✓ Compiled /api/scan/brief in 350ms (562 modules)
+ POST /api/scan/brief 200 in 22141ms

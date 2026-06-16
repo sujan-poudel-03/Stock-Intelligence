@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { EXPECTED_TABLES } from '@/lib/constants';
 import { pingLLM } from '@/lib/llmPing';
+import { remaining, dailyBudget } from '@/lib/budget';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +72,9 @@ export async function GET() {
     db.tables_missing.length === 0 &&
     llm.reachable;
 
+  // Daily call budget (informational — does not affect readiness).
+  const budget = { daily: dailyBudget(), remaining: await remaining() };
+
   return NextResponse.json(
     {
       ok,
@@ -78,6 +82,7 @@ export async function GET() {
       env,
       db,
       llm,
+      budget,
       timestamp: new Date().toISOString(),
     },
     { status: ok ? 200 : 503 }

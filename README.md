@@ -67,6 +67,7 @@ The UI polls `/api/scan/status` every 5s while a scan is running.
    |---|---|
    | `LLM_PROVIDER` | `gemini` (initial) or `claude` (later) |
    | `GEMINI_API_KEY` / `GEMINI_MODEL` | Gemini provider (default model `gemini-2.5-flash`) |
+   | `LLM_DAILY_BUDGET` | daily LLM call cap; scan skips gracefully once spent (default `18`) |
    | `ANTHROPIC_API_KEY` / `NEPSE_MODEL` | Claude provider (used when `LLM_PROVIDER=claude`) |
    | `SUPABASE_URL` / `SUPABASE_ANON_KEY` | database |
    | `CRON_SECRET` | `Authorization: Bearer` guard for cron/worker/brief |
@@ -84,6 +85,27 @@ code is provider-agnostic. Swap providers with a single env var:
 
 `callLLM(prompt, { system, webSearch, webFetch, maxTokens })` returns plain text;
 `webSearch`/`webFetch` map to whichever provider is active.
+
+### Quota fit & crash safety
+
+The scan is designed to **never crash on LLM limits** — a free-tier quota or a
+transient overload degrades to a *partial* result instead of failing:
+
+- **Daily budget** (`LLM_DAILY_BUDGET`, default 18) is tracked in `kv_store`
+  (`ni:llm_usage`, resets at 00:00 UTC). `callLLM` checks it before every call.
+- **Graceful skip:** once the budget is spent, `callLLM` returns empty text
+  rather than calling the API. Every call site tolerates this
+  (`parseJson('') → null → defaults`). The cron route caps queued symbols to
+  what the budget affords; the worker marks unaffordable stocks `skipped`; the
+  brief falls back to a **deterministic, no-LLM summary** built from the signals
+  already gathered.
+- **Transient errors** (503/UNAVAILABLE) get one bounded retry honouring the
+  provider's `RetryInfo` delay. A real quota error (429/RESOURCE_EXHAUSTED)
+  exhausts the budget for the day so the rest of the scan skips immediately.
+- `GET /api/health` reports `budget: { daily, remaining }`.
+
+To tune spend in production, lower these one at a time: `LLM_DAILY_BUDGET`,
+`settings.discoverCount` (fewer discovered symbols), or reduce per-stock cost.
 4. **Run**
    ```bash
    npm run dev
