@@ -3,6 +3,8 @@ import { getSupabase } from '@/lib/supabase';
 import { scanOneStock } from '@/lib/scan';
 import { getWeightContext } from '@/lib/calibration';
 import { runBackground, triggerRoute } from '@/lib/background';
+import { logEvent } from '@/lib/events';
+import { humanizeError } from '@/lib/humanizeError';
 import { withGuard } from '@/lib/respond';
 import { STALE_JOB_MS, MAX_ATTEMPTS, checkCronAuth } from '@/lib/constants';
 import { remaining } from '@/lib/budget';
@@ -101,6 +103,12 @@ async function processJob(supabase, job, origin) {
         completed_at: new Date().toISOString(),
       })
       .eq('id', job.id);
+    await logEvent(supabase, {
+      scanId,
+      type: 'job_skipped',
+      symbol: job.symbol,
+      message: `${job.symbol} skipped — daily AI budget reached`,
+    });
     await chainNext(supabase, scanId, origin);
     return;
   }
@@ -155,6 +163,21 @@ async function processJob(supabase, job, origin) {
       .eq('id', job.id);
 
     await bumpCompleted(supabase, scanId, 'completed');
+
+    await logEvent(supabase, {
+      scanId,
+      type: 'signal',
+      symbol: signal.symbol,
+      message: `${signal.symbol}: ${signal.signal} (${signal.confidence})`,
+      data: {
+        signal: signal.signal,
+        confidence: signal.confidence,
+        price: signal.price,
+        target: signal.target,
+        sl: signal.sl,
+        sector: signal.sector,
+      },
+    });
   } catch (err) {
     const message = err?.message || String(err);
     const attempt = job.attempt || 1;
@@ -165,6 +188,14 @@ async function processJob(supabase, job, origin) {
         .update({ status: 'permanently_failed', error: message, completed_at: new Date().toISOString() })
         .eq('id', job.id);
       await bumpCompleted(supabase, scanId, 'failed');
+      const h = humanizeError(message);
+      await logEvent(supabase, {
+        scanId,
+        type: 'job_failed',
+        symbol: job.symbol,
+        message: `${job.symbol} failed: ${h.message}`,
+        data: { kind: h.kind, attempt },
+      });
     } else {
       // Return to the queue for another attempt.
       await supabase

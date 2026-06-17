@@ -11,6 +11,7 @@ export const EXPECTED_TABLES = [
   'weights',
   'outcomes',
   'alerts',
+  'events',
 ];
 
 export const KV = {
@@ -27,6 +28,13 @@ export const SCAN_GUARD_MS = 30 * 60 * 1000; // skip new scan if one started < 3
 export const STALE_JOB_MS = 90 * 1000; // reclaim running jobs older than 90s
 export const STALL_MS = 2 * 60 * 1000; // status considers scan stalled after 2 min no progress
 export const MAX_ATTEMPTS = 3; // per-job retry ceiling
+
+// Watchlist auto-promotion. A symbol seen on the "watch" side (HOLD) across at
+// least WATCH_PROMOTE_MIN of the last SIGNAL_HISTORY_SCANS scans is auto-added to
+// the watchlist so the agent keeps monitoring it; when it later flips to BUY/SELL
+// it surfaces on Today.
+export const SIGNAL_HISTORY_SCANS = 3; // how many recent scans count as "recent"
+export const WATCH_PROMOTE_MIN = 2; // min HOLD appearances within that window to promote
 
 // Verify the cron / internal Authorization: Bearer CRON_SECRET header.
 export function checkCronAuth(request) {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery } from '@/lib/scan';
 import { triggerRoute } from '@/lib/background';
+import { logEvent } from '@/lib/events';
 import { withGuard } from '@/lib/respond';
 import {
   KV,
@@ -124,6 +125,13 @@ async function handle(request) {
   }
 
   await supabase.from('scans').update({ status: 'running', phase: 'stocks' }).eq('id', scanId);
+
+  await logEvent(supabase, {
+    scanId,
+    type: 'scan_started',
+    message: `Scan started — ${symbols.length} stock${symbols.length === 1 ? '' : 's'} (${market.sentiment || 'NEUTRAL'})`,
+    data: { total: symbols.length, sentiment: market.sentiment, symbols },
+  });
 
   const auth = process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {};
   const origin = request.nextUrl.origin;

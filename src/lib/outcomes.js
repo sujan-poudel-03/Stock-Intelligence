@@ -1,6 +1,7 @@
 import { getSupabase } from './supabase.js';
 import { callLLM, parseJson } from './llm.js';
 import { updateWeights } from './calibration.js';
+import { logEvent } from './events.js';
 import { sendAlert } from './email.js';
 
 // checkOutcomes(): for every PENDING signal, fetch the latest price and resolve
@@ -76,6 +77,14 @@ export async function checkOutcomes() {
       price,
       outcome === 'WIN' ? target : sl
     );
+
+    // Durable history of the resolved outcome (feeds the Activity tab).
+    await logEvent(supabase, {
+      type: outcome === 'WIN' ? 'outcome_win' : 'outcome_loss',
+      symbol: sig.symbol,
+      message: `${sig.symbol} ${sig.signal} → ${outcome} (${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%) at ${price}`,
+      data: { signal: sig.signal, outcome, price, returnPct, target, sl },
+    });
 
     resolved.push({ symbol: sig.symbol, outcome, price, returnPct });
   }

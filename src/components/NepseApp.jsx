@@ -30,26 +30,57 @@ export default function NepseApp() {
 
   const [status, setStatus] = useState(null); // /api/scan/status payload
   const [brief, setBrief] = useState(null);
+  const [signals, setSignals] = useState([]); // latest scan's per-symbol signals
   const [watchlist, setWatchlist] = useState([]);
-  const [activity, setActivity] = useState([]); // simple completion log
+  const [activity, setActivity] = useState([]); // durable history (from /api/activity)
   const [scanStarting, setScanStarting] = useState(false);
 
   const pollRef = useRef(null);
   const lastSymbolRef = useRef(null);
 
+  // Ephemeral, client-side feedback (retries, start failures). Durable scan
+  // events come from /api/activity; these fill the gap until the next refresh.
   const log = useCallback((msg) => {
-    setActivity((prev) => [{ t: Date.now(), msg }, ...prev].slice(0, 50));
+    setActivity((prev) =>
+      [{ id: `local-${Date.now()}`, type: 'local', message: msg, created_at: new Date().toISOString() }, ...prev].slice(0, 100)
+    );
   }, []);
 
-  // --- initial load from KV ------------------------------------------------
+  // --- data loaders --------------------------------------------------------
+  const loadSignals = useCallback(async () => {
+    try {
+      const res = await fetch('/api/signals', { cache: 'no-store' });
+      const data = await res.json();
+      if (Array.isArray(data.signals)) setSignals(data.signals);
+    } catch (err) {
+      console.error('signals load failed:', err);
+    }
+  }, []);
+
+  const loadActivity = useCallback(async () => {
+    try {
+      const res = await fetch('/api/activity?limit=100', { cache: 'no-store' });
+      const data = await res.json();
+      if (Array.isArray(data.events)) setActivity(data.events);
+    } catch (err) {
+      console.error('activity load failed:', err);
+    }
+  }, []);
+
+  const loadWatchlist = useCallback(async () => {
+    const wl = await dbGet(KEY_WATCHLIST);
+    if (Array.isArray(wl)) setWatchlist(wl);
+    else if (Array.isArray(wl?.symbols)) setWatchlist(wl.symbols);
+  }, []);
+
+  // --- initial load --------------------------------------------------------
   useEffect(() => {
     (async () => {
-      const [b, wl] = await Promise.all([dbGet(KEY_BRIEF), dbGet(KEY_WATCHLIST)]);
+      const b = await dbGet(KEY_BRIEF);
       if (b) setBrief(b);
-      if (Array.isArray(wl)) setWatchlist(wl);
-      else if (Array.isArray(wl?.symbols)) setWatchlist(wl.symbols);
+      await Promise.all([loadWatchlist(), loadSignals(), loadActivity()]);
     })();
-  }, []);
+  }, [loadWatchlist, loadSignals, loadActivity]);
 
   // --- status polling ------------------------------------------------------
   const pollStatus = useCallback(async () => {
@@ -58,23 +89,23 @@ export default function NepseApp() {
       const data = await res.json();
       setStatus(data);
 
-      // Log each newly completed stock as it appears.
+      // Stream durable activity in as the scan progresses.
       if (data.current_symbol && data.current_symbol !== lastSymbolRef.current) {
         lastSymbolRef.current = data.current_symbol;
-        log(`Scanning ${data.current_symbol} (${data.completed}/${data.total})`);
+        loadActivity();
       }
 
-      // When the scan stops running, refresh the brief and stop polling.
+      // When the scan stops running, refresh outputs and stop polling.
       if (!data.running) {
         stopPolling();
         const b = await dbGet(KEY_BRIEF);
         if (b) setBrief(b);
-        log('Scan finished');
+        await Promise.all([loadSignals(), loadWatchlist(), loadActivity()]);
       }
     } catch (err) {
       console.error('status poll failed:', err);
     }
-  }, [log]);
+  }, [loadActivity, loadSignals, loadWatchlist]);
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
@@ -227,6 +258,22 @@ export default function NepseApp() {
                 <p style={S.muted}>No brief yet. Run a scan to generate one.</p>
               )}
             </Placeholder>
+
+            {/* Per-symbol trade signals from the latest scan. */}
+            <div style={{ marginTop: 16 }}>
+              <div style={S.sectionTitle}>
+                Signals {signals.length ? <span style={S.muted}>({signals.length})</span> : null}
+              </div>
+              {signals.length ? (
+                <div style={S.cardGrid}>
+                  {signals.map((s) => (
+                    <SignalCard key={s.id} s={s} />
+                  ))}
+                </div>
+              ) : (
+                <p style={S.muted}>No signals yet. Run a scan to generate them.</p>
+              )}
+            </div>
           </div>
         )}
 
@@ -266,13 +313,22 @@ export default function NepseApp() {
                 </div>
               )}
               {watchlist.length ? (
-                <ul style={S.list}>
-                  {watchlist.map((s) => (
-                    <li key={typeof s === 'string' ? s : s.symbol}>
-                      {typeof s === 'string' ? s : s.symbol}
-                    </li>
-                  ))}
-                </ul>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {watchlist.map((s) => {
+                    const sym = typeof s === 'string' ? s : s.symbol;
+                    const last = typeof s === 'string' ? null : s.lastSignal;
+                    const reason = typeof s === 'string' ? null : s.reason;
+                    const actionable = last === 'BUY' || last === 'SELL';
+                    return (
+                      <div key={sym} style={S.wlRow}>
+                        <strong style={S.rowSymbol}>{sym}</strong>
+                        {last ? <SignalBadge signal={last} /> : null}
+                        {actionable ? <span style={S.actionableTag}>ACTIONABLE</span> : null}
+                        {reason ? <span style={S.rowMsg} title={reason}>{reason}</span> : null}
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
                 <p style={S.muted}>Watchlist empty.</p>
               )}
@@ -289,8 +345,8 @@ export default function NepseApp() {
               {activity.length ? (
                 <ul style={S.logList}>
                   {activity.map((a) => (
-                    <li key={a.t} style={S.logItem}>
-                      <span style={S.muted}>{new Date(a.t).toLocaleTimeString()}</span> — {a.msg}
+                    <li key={a.id} style={S.logItem}>
+                      <span style={S.muted}>{new Date(a.created_at).toLocaleTimeString()}</span> — {a.message}
                     </li>
                   ))}
                 </ul>
@@ -310,6 +366,58 @@ function Placeholder({ title, children }) {
     <div style={S.panel}>
       <div style={S.panelLabel}>{title} — V1 UI goes here</div>
       {children}
+    </div>
+  );
+}
+
+const SIGNAL_COLOR = {
+  BUY: { bg: '#0f2e1c', fg: '#34d399', bd: '#1f7a4d' },
+  SELL: { bg: '#3a1418', fg: '#f87171', bd: '#9b2c34' },
+  HOLD: { bg: '#332710', fg: '#fbbf24', bd: '#8a6516' },
+  AVOID: { bg: '#22262e', fg: '#9aa3b2', bd: '#3a4151' },
+};
+
+function SignalBadge({ signal }) {
+  const c = SIGNAL_COLOR[signal] || SIGNAL_COLOR.AVOID;
+  return (
+    <span style={{ ...S.sigBadge, background: c.bg, color: c.fg, border: `1px solid ${c.bd}` }}>
+      {signal || '—'}
+    </span>
+  );
+}
+
+function SignalCard({ s }) {
+  const c = SIGNAL_COLOR[s.signal] || SIGNAL_COLOR.AVOID;
+  const fmt = (v) => (v == null || v === '' ? '—' : v);
+  return (
+    <div style={{ ...S.card, borderLeft: `3px solid ${c.bd}` }}>
+      <div style={S.cardHead}>
+        <strong style={S.cardSymbol}>{s.symbol}</strong>
+        <SignalBadge signal={s.signal} />
+        {s.confidence ? <span style={S.confTag}>{s.confidence}</span> : null}
+        {s.sector ? <span style={S.sectorTag}>{s.sector}</span> : null}
+        {s.outcome && s.outcome !== 'PENDING' ? (
+          <span style={S.outcomeTag}>{s.outcome}</span>
+        ) : null}
+      </div>
+      <div style={S.metrics}>
+        <Metric label="Price" value={fmt(s.price)} />
+        <Metric label="Target" value={fmt(s.target)} />
+        <Metric label="Stop" value={fmt(s.sl)} />
+        <Metric label="Hold" value={fmt(s.hold)} />
+      </div>
+      {s.entry ? <p style={S.cardLine}><span style={S.muted}>Entry:</span> {s.entry}</p> : null}
+      {s.why ? <p style={S.cardLine}>{s.why}</p> : null}
+      {s.risk ? <p style={{ ...S.cardLine, ...S.muted }}>Risk: {s.risk}</p> : null}
+    </div>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <div style={S.metric}>
+      <span style={S.metricLabel}>{label}</span>
+      <span style={S.metricValue}>{value}</span>
     </div>
   );
 }
@@ -350,4 +458,24 @@ const S = {
   rowSymbol: { flexShrink: 0 },
   rowMsg: { color: 'var(--muted)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 },
   retryBtn: { flexShrink: 0, marginLeft: 'auto', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontSize: 12 },
+
+  // Signals section + cards
+  sectionTitle: { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', margin: '0 0 10px' },
+  cardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
+  card: { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 12, padding: 14 },
+  cardHead: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 },
+  cardSymbol: { fontSize: 16 },
+  sigBadge: { fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 6, letterSpacing: 0.5 },
+  confTag: { fontSize: 10, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' },
+  sectorTag: { fontSize: 10, color: 'var(--muted)', marginLeft: 'auto' },
+  outcomeTag: { fontSize: 10, fontWeight: 700, color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' },
+  metrics: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 8 },
+  metric: { display: 'flex', flexDirection: 'column', gap: 2 },
+  metricLabel: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 },
+  metricValue: { fontSize: 14, fontWeight: 600 },
+  cardLine: { margin: '4px 0', fontSize: 13, lineHeight: 1.4 },
+
+  // Watchlist rows
+  wlRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8 },
+  actionableTag: { fontSize: 10, fontWeight: 700, color: '#34d399', border: '1px solid #1f7a4d', background: '#0f2e1c', borderRadius: 4, padding: '2px 6px', letterSpacing: 0.3 },
 };

@@ -3,8 +3,9 @@ import { getSupabase } from '@/lib/supabase';
 import { runBrief } from '@/lib/scan';
 import { checkOutcomes } from '@/lib/outcomes';
 import { runBackground } from '@/lib/background';
+import { logEvent } from '@/lib/events';
 import { withGuard } from '@/lib/respond';
-import { KV } from '@/lib/constants';
+import { KV, SIGNAL_HISTORY_SCANS, WATCH_PROMOTE_MIN } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -70,6 +71,11 @@ export const POST = withGuard(async (request) => {
     await pruneWatchlist(supabase, brief.stale);
   }
 
+  // 4b. Promotion engine: keep monitoring symbols that sit on the "watch" side
+  // (consistently HOLD) by auto-adding them to the watchlist, and refresh each
+  // watchlist entry's latest signal so the UI can flag the ones now actionable.
+  await promoteWatchlist(supabase, scanId, brief.stale || []);
+
   // 5. Mark the scan done / partial.
   const status = failures.length > 0 || skipped.length > 0 ? 'partial' : 'done';
   await supabase
@@ -82,6 +88,20 @@ export const POST = withGuard(async (request) => {
       completed_at: new Date().toISOString(),
     })
     .eq('id', scanId);
+
+  const actionable = doneSignals.filter((s) => s.signal === 'BUY' || s.signal === 'SELL');
+  await logEvent(supabase, {
+    scanId,
+    type: 'scan_finished',
+    message: `Scan ${status} — ${doneSignals.length} signal${doneSignals.length === 1 ? '' : 's'}, ${actionable.length} actionable`,
+    data: {
+      status,
+      signals: doneSignals.length,
+      actionable: actionable.length,
+      failed: failures.length,
+      skipped: skipped.length,
+    },
+  });
 
   // 6. Trigger outcome monitoring (updates weights + sends alerts) in background.
   await runBackground(async () => {
@@ -111,6 +131,99 @@ async function loadPortfolio(supabase) {
     .maybeSingle();
   const v = data?.value;
   return Array.isArray(v) ? v : Array.isArray(v?.positions) ? v.positions : [];
+}
+
+// Auto-promote consistently-watched symbols and refresh the latest-signal state
+// on every watchlist entry. "Watch side" = HOLD; a symbol seen HOLD in at least
+// WATCH_PROMOTE_MIN of the last SIGNAL_HISTORY_SCANS scans is added so the agent
+// keeps tracking it. Entries are stored as objects so the UI can show their state
+// and highlight the ones now BUY/SELL ("actionable").
+async function promoteWatchlist(supabase, scanId, staleSymbols) {
+  // Recent scans (newest first) → the history window.
+  const { data: recentScans } = await supabase
+    .from('scans')
+    .select('id')
+    .order('started_at', { ascending: false })
+    .limit(SIGNAL_HISTORY_SCANS);
+  const scanIds = (recentScans || []).map((s) => s.id);
+  if (!scanIds.length) return;
+
+  const { data: rows } = await supabase
+    .from('signals')
+    .select('symbol, signal, scan_id, created_at')
+    .in('scan_id', scanIds);
+  if (!rows || !rows.length) return;
+
+  // Per-symbol: count HOLD appearances and capture the latest signal.
+  const bySymbol = new Map();
+  for (const r of rows) {
+    const sym = (r.symbol || '').toUpperCase();
+    if (!sym) continue;
+    const e = bySymbol.get(sym) || { holds: 0, latest: null, latestAt: 0 };
+    if (r.signal === 'HOLD') e.holds += 1;
+    const ts = r.created_at ? new Date(r.created_at).getTime() : 0;
+    if (ts >= e.latestAt) {
+      e.latestAt = ts;
+      e.latest = r.signal;
+    }
+    bySymbol.set(sym, e);
+  }
+
+  const stale = new Set((staleSymbols || []).map((s) => String(s).toUpperCase()));
+
+  // Load + normalise the current watchlist (tolerates string[] or {symbols}).
+  const { data: kv } = await supabase
+    .from('kv_store')
+    .select('value')
+    .eq('key', KV.WATCHLIST)
+    .maybeSingle();
+  const value = kv?.value;
+  const wasWrapped = !Array.isArray(value) && Array.isArray(value?.symbols);
+  const list = Array.isArray(value) ? value : wasWrapped ? value.symbols : [];
+
+  const entries = new Map();
+  for (const item of list) {
+    const sym = (typeof item === 'string' ? item : item?.symbol || '').toUpperCase();
+    if (!sym) continue;
+    entries.set(sym, typeof item === 'string' ? { symbol: sym } : { ...item, symbol: sym });
+  }
+
+  const now = new Date().toISOString();
+  const promoted = [];
+
+  for (const [sym, e] of bySymbol) {
+    if (stale.has(sym)) continue; // don't re-add what the brief just flagged stale
+    const existing = entries.get(sym);
+    if (existing) {
+      // Refresh latest-signal state on entries already tracked.
+      entries.set(sym, { ...existing, lastSignal: e.latest, lastSignalAt: now });
+    } else if (e.holds >= WATCH_PROMOTE_MIN) {
+      entries.set(sym, {
+        symbol: sym,
+        addedAt: now,
+        reason: `auto: HOLD in ${e.holds}/${SIGNAL_HISTORY_SCANS} recent scans`,
+        lastSignal: e.latest,
+        lastSignalAt: now,
+      });
+      promoted.push(sym);
+    }
+  }
+
+  const nextList = [...entries.values()];
+  const newValue = wasWrapped ? { ...value, symbols: nextList } : nextList;
+  await supabase.from('kv_store').upsert(
+    { key: KV.WATCHLIST, value: newValue, updated_at: now },
+    { onConflict: 'key' }
+  );
+
+  if (promoted.length) {
+    await logEvent(supabase, {
+      scanId,
+      type: 'watchlist_promoted',
+      message: `Added to watchlist: ${promoted.join(', ')}`,
+      data: { symbols: promoted },
+    });
+  }
 }
 
 async function pruneWatchlist(supabase, staleSymbols) {

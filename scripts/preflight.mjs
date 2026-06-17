@@ -68,6 +68,7 @@ const EXPECTED_TABLES = [
   'weights',
   'outcomes',
   'alerts',
+  'events',
 ];
 
 // --- tiny output helpers ----------------------------------------------------

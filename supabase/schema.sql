@@ -119,3 +119,17 @@ create table if not exists alerts (
 
 create index if not exists alerts_symbol_idx     on alerts (symbol);
 create index if not exists alerts_created_at_idx on alerts (created_at desc);
+
+-- 8. events — durable activity history (scan progress, signals, promotions, outcomes)
+create table if not exists events (
+  id         uuid primary key default gen_random_uuid(),
+  scan_id    uuid,
+  type       text,
+  symbol     text,
+  message    text,
+  data       jsonb,
+  created_at timestamptz default now()
+);
+
+create index if not exists events_created_at_idx on events (created_at desc);
+create index if not exists events_scan_id_idx    on events (scan_id);
