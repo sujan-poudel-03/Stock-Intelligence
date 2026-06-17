@@ -1,5 +1,6 @@
 import { callLLM, parseJson } from './llm.js';
 import { getWeightContext } from './calibration.js';
+import { getKnowledgeContext } from './knowledge.js';
 
 // ---------------------------------------------------------------------------
 // scanMarket(): fetch NEPSE index, gainers, losers, turnover via web search.
@@ -80,7 +81,7 @@ Return ONLY a JSON array of ${n} ticker strings, e.g. ["NABIL","UPPER","NICA"].`
 //   `weights` is an optional pre-fetched weight-context string; when omitted it
 //   is looked up via getWeightContext().
 // ---------------------------------------------------------------------------
-export async function scanOneStock(symbol, marketData = {}, weights = null) {
+export async function scanOneStock(symbol, marketData = {}, weights = null, knowledge = null) {
   const fetchPrompt = `Search merolagani.com (and sharesansar.com as backup) for the current trading data of NEPSE stock "${symbol}".
 
 Return ONLY JSON:
@@ -109,6 +110,9 @@ Return ONLY JSON:
   const weightContext =
     weights != null ? weights : await getWeightContext(symbol, sector);
 
+  const knowledgeContext =
+    knowledge != null ? knowledge : await getKnowledgeContext(symbol, sector);
+
   const signalPrompt = `You are a disciplined NEPSE swing-trading analyst. Generate ONE trade signal for ${symbol}.
 
 LIVE DATA:
@@ -119,6 +123,9 @@ Index: ${marketData.index ?? 'n/a'} (${marketData.changePct ?? 'n/a'}%), sentime
 
 AGENT TRACK RECORD (calibration — weigh this when setting confidence):
 ${weightContext || 'No prior track record yet.'}
+
+LEARNED KNOWLEDGE (past outcomes & notes for this stock/sector — apply these lessons):
+${knowledgeContext || 'No accumulated knowledge yet.'}
 
 Return ONLY JSON with this exact shape:
 {

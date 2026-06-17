@@ -1,6 +1,7 @@
 import { getSupabase } from './supabase.js';
 import { callLLM, parseJson } from './llm.js';
 import { updateWeights } from './calibration.js';
+import { recordOutcomeKnowledge } from './knowledge.js';
 import { logEvent } from './events.js';
 import { sendAlert } from './email.js';
 
@@ -67,8 +68,9 @@ export async function checkOutcomes() {
       created_at: now,
     });
 
-    // Update calibration.
+    // Update calibration (statistical) + knowledge base (qualitative lessons).
     await updateWeights(sig.symbol, sig.sector, sig.signal, outcome, returnPct);
+    await recordOutcomeKnowledge(supabase, sig, outcome, price, returnPct);
 
     // Alert.
     await sendAlert(

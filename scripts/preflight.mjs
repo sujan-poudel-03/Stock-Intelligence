@@ -69,6 +69,7 @@ const EXPECTED_TABLES = [
   'outcomes',
   'alerts',
   'events',
+  'knowledge',
 ];
 
 // --- tiny output helpers ----------------------------------------------------

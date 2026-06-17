@@ -12,6 +12,7 @@ export const EXPECTED_TABLES = [
   'outcomes',
   'alerts',
   'events',
+  'knowledge',
 ];
 
 export const KV = {
