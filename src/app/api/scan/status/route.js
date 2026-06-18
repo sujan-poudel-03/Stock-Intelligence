@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { withGuard } from '@/lib/respond';
 import { STALL_MS } from '@/lib/constants';
+import { nextScanRunIso } from '@/lib/schedule';
 import { humanizeError } from '@/lib/humanizeError';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,9 @@ export const GET = withGuard(async () => {
       failed_jobs: [],
       skipped_jobs: [],
       last_updated: null,
+      last_scan_at: null,
+      last_scan_status: null,
+      next_scheduled: nextScanRunIso(),
     });
   }
 
@@ -84,6 +88,9 @@ export const GET = withGuard(async () => {
       return { symbol: j.symbol, kind: h.kind, message: h.message };
     }),
     last_updated: lastUpdated,
+    last_scan_at: scan.completed_at || scan.started_at,
+    last_scan_status: scan.status,
+    next_scheduled: nextScanRunIso(),
   });
 });
 

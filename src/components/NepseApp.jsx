@@ -209,6 +209,27 @@ export default function NepseApp() {
             {running ? 'Scanning…' : scanStarting ? 'Starting…' : 'Scan now'}
           </button>
         </div>
+
+        {/* Schedule indicator — last run (relative) + next cron run (local time) */}
+        {(status?.last_scan_at || status?.next_scheduled) && (
+          <div style={S.schedule}>
+            {status?.last_scan_at ? (
+              <span title={new Date(status.last_scan_at).toLocaleString()}>
+                Last scan {timeAgo(status.last_scan_at)}
+              </span>
+            ) : (
+              <span>No scans yet</span>
+            )}
+            {status?.next_scheduled ? (
+              <>
+                <span style={S.scheduleDot}>·</span>
+                <span title={`Next automated scan: ${new Date(status.next_scheduled).toLocaleString()} (Vercel cron, deployed app only)`}>
+                  Next scan {new Date(status.next_scheduled).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </>
+            ) : null}
+          </div>
+        )}
       </header>
 
       {/* ===== PARTIAL-SCAN AMBER BANNER (Today tab) ===== */}
@@ -422,6 +443,19 @@ function Metric({ label, value }) {
   );
 }
 
+// Compact relative time, e.g. "just now", "4m ago", "3h ago", "2d ago".
+function timeAgo(iso) {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 60) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
 // Inline styles keep the shell self-contained until the V1 UI (with its own
 // styling) is pasted in.
 const S = {
@@ -436,6 +470,8 @@ const S = {
   exDisabled: { opacity: 0.5, cursor: 'not-allowed' },
   soon: { fontSize: 10, color: 'var(--amber)', marginLeft: 4 },
   headerRight: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
+  schedule: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, fontSize: 12, color: 'var(--muted)' },
+  scheduleDot: { opacity: 0.6 },
   progress: { display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--muted)', fontSize: 14 },
   spinner: { width: 10, height: 10, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' },
   stalled: { color: 'var(--amber)' },
