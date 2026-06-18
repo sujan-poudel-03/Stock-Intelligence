@@ -36,40 +36,45 @@ export async function callLLM(prompt, options = {}) {
     return '';
   }
 
-  try {
-    const text = await complete(provider, prompt, options);
-    await spend(1);
-    return text;
-  } catch (err) {
-    const kind = classifyError(err);
+  // Retry loop. `spend(1)` only runs on a SUCCESSFUL complete(), so rejected
+  // attempts never consume budget. Rate limits (per-minute) and transient
+  // overloads are retried with backoff; only a true daily-quota error stops the
+  // day via exhaust().
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const text = await complete(provider, prompt, options);
+      await spend(1);
+      return text;
+    } catch (err) {
+      const kind = classifyError(err);
 
-    // Transient overload (503 / UNAVAILABLE): one bounded retry, honouring the
-    // provider's RetryInfo delay when present.
-    if (kind === 'transient') {
-      const waitMs = Math.min(retryDelayMs(err) ?? 4000, 15000);
-      console.warn(`[llm] transient error — retrying in ${waitMs}ms:`, err?.message || err);
-      await sleep(waitMs);
-      try {
-        const text = await complete(provider, prompt, options);
-        await spend(1);
-        return text;
-      } catch (err2) {
-        if (classifyError(err2) === 'quota') await exhaust();
-        console.warn('[llm] retry failed — skipping:', err2?.message || err2);
+      // Daily quota (RPD / "PerDay" exhausted): stop spending for the rest of
+      // the day. This is the ONLY path that calls exhaust().
+      if (kind === 'quota') {
+        await exhaust();
+        console.warn('[llm] daily quota exhausted — skipping remaining calls today');
         return '';
       }
-    }
 
-    // Quota (429 / RESOURCE_EXHAUSTED): stop spending for the rest of the day.
-    if (kind === 'quota') {
-      await exhaust();
-      console.warn('[llm] quota exhausted — skipping remaining calls today');
+      // Per-minute rate limit or transient overload (429 RPM / 503): back off
+      // and retry. Do NOT exhaust the day — these clear on their own.
+      if ((kind === 'rate' || kind === 'transient') && attempt < MAX_RETRIES) {
+        const fallback = kind === 'rate' ? 6000 : 4000;
+        const waitMs = Math.min(retryDelayMs(err) ?? fallback * (attempt + 1), 30000);
+        console.warn(
+          `[llm] ${kind} error (attempt ${attempt + 1}/${MAX_RETRIES}) — retrying in ${waitMs}ms:`,
+          err?.message || err
+        );
+        await sleep(waitMs);
+        continue;
+      }
+
+      // Retries exhausted, or a non-retryable error (network, bad request,
+      // parse): never crash the scan — skip this call.
+      console.warn('[llm] call failed — skipping:', err?.message || err);
       return '';
     }
-
-    // Anything else (network, bad request, parse): never crash the scan.
-    console.warn('[llm] call failed — skipping:', err?.message || err);
-    return '';
   }
 }
 
@@ -81,13 +86,34 @@ async function complete(provider, prompt, options) {
 }
 
 // Coarse error classification from status code or message text (SDKs vary).
+//   'quota'     -> daily/RPD limit truly exhausted; stop for the day.
+//   'rate'      -> per-minute (RPM/TPM) limit; transient, retry with backoff.
+//   'transient' -> 5xx overload; retry with backoff.
+//   'other'     -> non-retryable (network, bad request, parse).
+// A 429 is the ambiguous case: free-tier Gemini returns it for BOTH per-minute
+// limits and daily exhaustion. We only treat it as a daily 'quota' when the
+// message clearly says so (per-day / RPD / daily) OR carries no retry hint;
+// otherwise it's a recoverable per-minute 'rate' limit.
 function classifyError(err) {
   const msg = (err?.message || String(err || '')).toLowerCase();
   const status = err?.status ?? err?.code;
-  if (status === 429 || /resource_exhausted|quota|too many requests/.test(msg)) return 'quota';
+
   if (status === 503 || status === 500 || /unavailable|overloaded|high demand/.test(msg)) {
     return 'transient';
   }
+
+  const isTooMany = status === 429 || /resource_exhausted|too many requests|rate limit/.test(msg);
+  if (isTooMany) {
+    const saysDaily = /per ?day|perday|\brpd\b|daily|per-day|requests per day/.test(msg);
+    const saysPerMinute = /per ?minute|perminute|\brpm\b|\btpm\b|per-minute|requests per minute/.test(msg);
+    const hasRetryHint = retryDelayMs(err) != null;
+    // Daily only when explicitly stated, or when it's a bare quota error with no
+    // per-minute signal and no short retry hint to wait on.
+    if (saysDaily) return 'quota';
+    if (saysPerMinute || hasRetryHint) return 'rate';
+    return /quota/.test(msg) ? 'quota' : 'rate';
+  }
+
   return 'other';
 }
 

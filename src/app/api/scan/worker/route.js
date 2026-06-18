@@ -9,8 +9,8 @@ import { withGuard } from '@/lib/respond';
 import { STALE_JOB_MS, MAX_ATTEMPTS, checkCronAuth } from '@/lib/constants';
 import { remaining } from '@/lib/budget';
 
-// A full stock scan costs ~2 LLM calls (live-data fetch + signal generation).
-const CALLS_PER_STOCK = 2;
+// A full stock scan costs 1 LLM call (a single grounded fetch + signal call).
+const CALLS_PER_STOCK = 1;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;

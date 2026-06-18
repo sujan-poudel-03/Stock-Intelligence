@@ -82,41 +82,18 @@ Return ONLY a JSON array of ${n} ticker strings, e.g. ["NABIL","UPPER","NICA"].`
 //   is looked up via getWeightContext().
 // ---------------------------------------------------------------------------
 export async function scanOneStock(symbol, marketData = {}, weights = null, knowledge = null) {
-  const fetchPrompt = `Search merolagani.com (and sharesansar.com as backup) for the current trading data of NEPSE stock "${symbol}".
+  // Calibration + learned knowledge are keyed by symbol (and sector once known).
+  // We fetch them up front with a null sector — the single grounded call below
+  // both pulls live data AND emits the signal, so there's no intermediate step
+  // at which the sector is known. This halves per-stock LLM cost (1 call, not 2)
+  // and the rate-limit pressure that comes with it.
+  const weightContext = weights != null ? weights : await getWeightContext(symbol, null);
+  const knowledgeContext = knowledge != null ? knowledge : await getKnowledgeContext(symbol, null);
 
-Return ONLY JSON:
-{
-  "symbol": "${symbol}",
-  "price": <last traded price as number>,
-  "change": <day change as number>,
-  "changePct": <day percent change as number>,
-  "high52": <52-week high or null>,
-  "low52": <52-week low or null>,
-  "volume": <today's volume or null>,
-  "sector": "<sector name e.g. Commercial Banks, Hydropower, Microfinance>",
-  "pe": <P/E ratio or null>
-}`;
+  const prompt = `You are a disciplined NEPSE swing-trading analyst. Research stock "${symbol}" and produce ONE trade signal.
 
-  const liveText = await callLLM(fetchPrompt, {
-    webSearch: true,
-    webFetch: true,
-    maxTokens: 1500,
-    system: 'You are a NEPSE stock data extraction agent. Return only valid JSON with live data.',
-  });
-
-  const live = parseJson(liveText) || { symbol };
-  const sector = live.sector || null;
-
-  const weightContext =
-    weights != null ? weights : await getWeightContext(symbol, sector);
-
-  const knowledgeContext =
-    knowledge != null ? knowledge : await getKnowledgeContext(symbol, sector);
-
-  const signalPrompt = `You are a disciplined NEPSE swing-trading analyst. Generate ONE trade signal for ${symbol}.
-
-LIVE DATA:
-${JSON.stringify(live, null, 2)}
+STEP 1 — Search merolagani.com (and sharesansar.com as backup) for ${symbol}'s current trading data: last price, day change, 52-week high/low, volume, sector, P/E.
+STEP 2 — Using that live data plus the context below, decide the signal.
 
 MARKET CONTEXT:
 Index: ${marketData.index ?? 'n/a'} (${marketData.changePct ?? 'n/a'}%), sentiment: ${marketData.sentiment ?? 'NEUTRAL'}
@@ -127,43 +104,67 @@ ${weightContext || 'No prior track record yet.'}
 LEARNED KNOWLEDGE (past outcomes & notes for this stock/sector — apply these lessons):
 ${knowledgeContext || 'No accumulated knowledge yet.'}
 
-Return ONLY JSON with this exact shape:
+Return ONLY JSON with this exact shape (no prose, no markdown):
 {
   "symbol": "${symbol}",
+  "price": <last traded price as number>,
+  "change": <day change as number or null>,
+  "changePct": <day percent change as number or null>,
+  "high52": <52-week high or null>,
+  "low52": <52-week low or null>,
+  "volume": <today's volume or null>,
+  "pe": <P/E ratio or null>,
+  "sector": "<sector name e.g. Commercial Banks, Hydropower, Microfinance>",
   "signal": "<BUY | SELL | HOLD | AVOID>",
   "confidence": "<HIGH | MEDIUM | LOW>",
-  "price": <current price as number>,
   "entry": "<entry zone description>",
   "sl": <stop-loss price as number>,
   "target": <target price as number>,
   "hold": "<expected hold period e.g. '1-2 weeks'>",
   "why": "<1-2 sentence rationale>",
   "risk": "<key risk in one sentence>",
-  "action": "<concise next action>",
-  "sector": "<sector>"
+  "action": "<concise next action>"
 }`;
 
-  const signalText = await callLLM(signalPrompt, {
-    maxTokens: 1200,
-    system: 'You are a NEPSE trading signal generator. Return only valid JSON. Be disciplined and risk-aware.',
+  const text = await callLLM(prompt, {
+    webSearch: true,
+    webFetch: true,
+    maxTokens: 2500,
+    system:
+      'You are a NEPSE research + trading signal agent. Fetch live data, then return only valid JSON. Be disciplined and risk-aware.',
   });
 
-  const signal = parseJson(signalText) || {};
+  const r = parseJson(text) || {};
+  const sector = r.sector || null;
+
+  // Preserve the live-data subset we used to store separately, for outcome
+  // auditing and the UI's live_data view.
+  const live = {
+    symbol,
+    price: numOrNull(r.price),
+    change: numOrNull(r.change),
+    changePct: numOrNull(r.changePct),
+    high52: numOrNull(r.high52),
+    low52: numOrNull(r.low52),
+    volume: numOrNull(r.volume),
+    pe: numOrNull(r.pe),
+    sector,
+  };
 
   return {
     symbol,
-    signal: signal.signal || 'HOLD',
-    confidence: signal.confidence || 'LOW',
-    price: numOrNull(signal.price ?? live.price),
-    entry: signal.entry || null,
-    sl: numOrNull(signal.sl),
-    target: numOrNull(signal.target),
-    hold: signal.hold || null,
-    why: signal.why || null,
-    risk: signal.risk || null,
-    action: signal.action || null,
+    signal: r.signal || 'HOLD',
+    confidence: r.confidence || 'LOW',
+    price: numOrNull(r.price),
+    entry: r.entry || null,
+    sl: numOrNull(r.sl),
+    target: numOrNull(r.target),
+    hold: r.hold || null,
+    why: r.why || null,
+    risk: r.risk || null,
+    action: r.action || null,
     source: 'merolagani',
-    sector: signal.sector || sector || null,
+    sector,
     live_data: live,
   };
 }

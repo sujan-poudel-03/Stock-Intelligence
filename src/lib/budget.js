@@ -8,7 +8,11 @@ import { getSupabase } from './supabase.js';
 // counter would not persist. Tune the ceiling with the LLM_DAILY_BUDGET env var.
 
 const USAGE_KEY = 'ni:llm_usage';
-const DEFAULT_BUDGET = 18; // safe margin under the observed free-tier cap (20)
+// gemini-2.5-flash free tier is ~250 requests/DAY (RPD); the per-MINUTE limit
+// (~10–15 RPM) is the real constraint during a burst scan and is handled by the
+// rate-limit backoff in llm.js — NOT by this daily ceiling. 100 leaves comfortable
+// daily headroom for several scans + outcome checks. Tune with LLM_DAILY_BUDGET.
+const DEFAULT_BUDGET = 100;
 
 export function dailyBudget() {
   const n = Number(process.env.LLM_DAILY_BUDGET);

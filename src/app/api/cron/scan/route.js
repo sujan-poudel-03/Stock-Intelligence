@@ -87,7 +87,7 @@ async function handle(request) {
   // front (logged, not silent) instead of queuing work that would only be
   // skipped — the worker still budget-checks each job as a backstop.
   const BUDGET_RESERVE = 2; // brief + outcomes
-  const CALLS_PER_STOCK = 2;
+  const CALLS_PER_STOCK = 1; // one grounded fetch+signal call per stock
   const budgetLeft = await remaining();
   const affordable = Math.max(0, Math.floor((budgetLeft - BUDGET_RESERVE) / CALLS_PER_STOCK));
   const symbols = allSymbols.slice(0, affordable);
