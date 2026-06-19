@@ -27,6 +27,12 @@ async function handle(request) {
 
   const supabase = getSupabase();
 
+  // Scan mode. 'light' (intraday) keeps cost low for high-frequency market-hours
+  // runs: it scans only the watchlist, skips discovery, and reuses the most recent
+  // scan's market read instead of spending fresh market + discovery LLM calls.
+  // 'full' (default, ~once/day) does the complete market + discovery + scan.
+  const mode = request.nextUrl.searchParams.get('mode') === 'light' ? 'light' : 'full';
+
   // Idempotency guard: skip if a scan started < 30 min ago and is still active.
   const cutoff = new Date(Date.now() - SCAN_GUARD_MS).toISOString();
   const { data: recent } = await supabase
@@ -59,25 +65,33 @@ async function handle(request) {
   if (scanErr) return NextResponse.json({ error: scanErr.message }, { status: 500 });
   const scanId = scanRows.id;
 
-  // 2. Fetch market data.
+  // 2. Resolve market data. Light mode reuses the most recent scan's market read
+  // (saves one LLM call); full mode fetches it fresh.
   let market = {};
-  try {
-    market = await scanMarket();
-  } catch (err) {
-    await supabase
-      .from('scans')
-      .update({ status: 'error', error: `market: ${err?.message || err}`, completed_at: new Date().toISOString() })
-      .eq('id', scanId);
-    return NextResponse.json({ error: `market scan failed: ${err?.message || err}` }, { status: 500 });
+  if (mode === 'light') {
+    market = (await loadRecentMarket(supabase, scanId)) || {};
+  } else {
+    try {
+      market = await scanMarket();
+    } catch (err) {
+      await supabase
+        .from('scans')
+        .update({ status: 'error', error: `market: ${err?.message || err}`, completed_at: new Date().toISOString() })
+        .eq('id', scanId);
+      return NextResponse.json({ error: `market scan failed: ${err?.message || err}` }, { status: 500 });
+    }
   }
 
-  // 3. Resolve watchlist + run discovery.
+  // 3. Resolve watchlist + (full mode only) run discovery. Light mode scans the
+  // watchlist only — no discovery LLM call.
   const watchlist = await loadWatchlist(supabase);
   let discovered = [];
-  try {
-    discovered = await runDiscovery(market, await loadSettings(supabase));
-  } catch (err) {
-    console.error('discovery failed:', err?.message || err);
+  if (mode === 'full') {
+    try {
+      discovered = await runDiscovery(market, await loadSettings(supabase));
+    } catch (err) {
+      console.error('discovery failed:', err?.message || err);
+    }
   }
 
   const allSymbols = [...new Set([...watchlist, ...discovered].map((s) => s.toUpperCase()))];
@@ -129,8 +143,8 @@ async function handle(request) {
   await logEvent(supabase, {
     scanId,
     type: 'scan_started',
-    message: `Scan started — ${symbols.length} stock${symbols.length === 1 ? '' : 's'} (${market.sentiment || 'NEUTRAL'})`,
-    data: { total: symbols.length, sentiment: market.sentiment, symbols },
+    message: `${mode === 'light' ? 'Light scan' : 'Scan'} started — ${symbols.length} stock${symbols.length === 1 ? '' : 's'} (${market.sentiment || 'NEUTRAL'})`,
+    data: { mode, total: symbols.length, sentiment: market.sentiment, symbols },
   });
 
   const auth = process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {};
@@ -147,12 +161,26 @@ async function handle(request) {
   // 6. Return immediately (well within 60s).
   return NextResponse.json({
     started: true,
+    mode,
     scan_id: scanId,
     total: symbols.length,
     discovered,
     watchlist,
     sentiment: market.sentiment,
   });
+}
+
+// Reuse the market read from the most recent completed scan (light mode), so an
+// intraday scan doesn't spend a fresh market LLM call. Returns null if none.
+async function loadRecentMarket(supabase, excludeScanId) {
+  const { data } = await supabase
+    .from('scans')
+    .select('id, market')
+    .not('market', 'is', null)
+    .neq('id', excludeScanId)
+    .order('started_at', { ascending: false })
+    .limit(1);
+  return data?.[0]?.market || null;
 }
 
 async function loadWatchlist(supabase) {

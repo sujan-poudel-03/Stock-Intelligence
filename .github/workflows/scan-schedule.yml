@@ -1,0 +1,72 @@
+name: NEPSE scan schedule
+
+# Free external scheduler for the deployed app. GitHub Actions cron runs in UTC and
+# replaces Vercel Hobby's 1-job/day cron limit. Each run just POSTs to the scan
+# endpoint; the actual work runs on the deployed app (Vercel), not in this runner.
+#
+# KEEP THE CRON TIMES IN SYNC with vercel.json / src/lib/schedule.js (UTC):
+#   45 3 * * 0-4       -> 09:30 NPT  full pre-open
+#   15,45 5-8 * * 0-4  -> 11:00–14:30 NPT every 30 min, light intraday
+#   45 9 * * 0-4       -> 15:30 NPT  full post-close
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   APP_BASE_URL  e.g. https://your-app.vercel.app   (no trailing slash)
+#   CRON_SECRET   same value set in the Vercel project env
+#
+# Notes: GitHub scheduled workflows run only on the default branch, may be delayed a
+# few minutes under load, and are auto-disabled after ~60 days without repo activity.
+
+on:
+  schedule:
+    - cron: '45 3 * * 0-4'        # full pre-open
+    - cron: '15,45 5-8 * * 0-4'   # light intraday
+    - cron: '45 9 * * 0-4'        # full post-close
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Scan mode (manual run)'
+        default: full
+        type: choice
+        options: [full, light]
+
+concurrency:
+  group: nepse-scan
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger scan on deployed app
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          TRIGGER_SCHEDULE: ${{ github.event.schedule }}
+          DISPATCH_MODE: ${{ github.event.inputs.mode }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APP_BASE_URL:-}" ]; then
+            echo "::error::APP_BASE_URL secret is not set"; exit 1
+          fi
+
+          # Decide mode: the intraday cron is 'light'; everything else is 'full'.
+          # A manual workflow_dispatch can override via the 'mode' input.
+          MODE="full"
+          if [ "${TRIGGER_SCHEDULE:-}" = "15,45 5-8 * * 0-4" ]; then MODE="light"; fi
+          if [ -n "${DISPATCH_MODE:-}" ]; then MODE="${DISPATCH_MODE}"; fi
+
+          URL="${APP_BASE_URL%/}/api/cron/scan"
+          if [ "$MODE" = "light" ]; then URL="${URL}?mode=light"; fi
+
+          echo "Triggering ${MODE} scan -> ${URL}"
+          code=$(curl -sS -o response.json -w '%{http_code}' -X POST "$URL" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "content-type: application/json")
+
+          echo "HTTP ${code}"
+          echo "Response:"; cat response.json || true; echo ""
+
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::Scan trigger failed with HTTP ${code}"; exit 1
+          fi

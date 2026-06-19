@@ -10,9 +10,10 @@ import { getSupabase } from './supabase.js';
 const USAGE_KEY = 'ni:llm_usage';
 // gemini-2.5-flash free tier is ~250 requests/DAY (RPD); the per-MINUTE limit
 // (~10–15 RPM) is the real constraint during a burst scan and is handled by the
-// rate-limit backoff in llm.js — NOT by this daily ceiling. 100 leaves comfortable
-// daily headroom for several scans + outcome checks. Tune with LLM_DAILY_BUDGET.
-const DEFAULT_BUDGET = 100;
+// rate-limit backoff in llm.js — NOT by this daily ceiling. The tiered schedule
+// (≈2 full + ~8 light scans/day) runs ~80–100 calls; 200 keeps headroom under the
+// ~250 RPD free cap. Tune with LLM_DAILY_BUDGET.
+const DEFAULT_BUDGET = 200;
 
 export function dailyBudget() {
   const n = Number(process.env.LLM_DAILY_BUDGET);

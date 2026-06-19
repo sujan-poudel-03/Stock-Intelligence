@@ -1,5 +1,7 @@
 {
   "crons": [
-    { "path": "/api/cron/scan", "schedule": "45 4 * * *" }
+    { "path": "/api/cron/scan", "schedule": "45 3 * * 0-4" },
+    { "path": "/api/cron/scan?mode=light", "schedule": "15,45 5-8 * * 0-4" },
+    { "path": "/api/cron/scan", "schedule": "45 9 * * 0-4" }
   ]
 }
