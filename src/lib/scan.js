@@ -136,12 +136,21 @@ Return ONLY JSON with this exact shape (no prose, no markdown):
 
   const r = parseJson(text) || {};
   const sector = r.sector || null;
+  const price = numOrNull(r.price);
+
+  // FIX 4 — never persist a hollow signal. No price => no usable signal; throw so
+  // the worker surfaces this as a failed job (red badge + retry) instead of saving
+  // an empty card. (deterministicSignal handles the budget-exhausted case upstream
+  // using a last-known price.)
+  if (!price || price <= 0) {
+    throw new Error(`no data from source: ${symbol}`);
+  }
 
   // Preserve the live-data subset we used to store separately, for outcome
   // auditing and the UI's live_data view.
   const live = {
     symbol,
-    price: numOrNull(r.price),
+    price,
     change: numOrNull(r.change),
     changePct: numOrNull(r.changePct),
     high52: numOrNull(r.high52),
@@ -151,21 +160,79 @@ Return ONLY JSON with this exact shape (no prose, no markdown):
     sector,
   };
 
+  // FIX 2 — fill any missing/zero targets deterministically so every persisted
+  // signal has real sl/target/entry. Keeps the model's signal verb + rationale.
+  const t = calcTargets({ entry: r.entry, sl: numOrNull(r.sl), target: numOrNull(r.target) }, price);
+
   return {
     symbol,
     signal: r.signal || 'HOLD',
     confidence: r.confidence || 'LOW',
-    price: numOrNull(r.price),
-    entry: r.entry || null,
-    sl: numOrNull(r.sl),
-    target: numOrNull(r.target),
+    price,
+    entry: t.entry,
+    sl: t.sl,
+    target: t.target,
     hold: r.hold || null,
     why: r.why || null,
     risk: r.risk || null,
     action: r.action || null,
     source: 'merolagani',
     sector,
-    live_data: live,
+    live_data: { ...live, targets_calculated: t.calculated },
+  };
+}
+
+// calcTargets(sig, price): fill missing/zero entry/sl/target deterministically.
+// 5% stop, 8% target, ±1% entry band. Returns { entry, sl, target, calculated }.
+function calcTargets(sig, price) {
+  let calculated = false;
+  let sl = numOrNull(sig.sl);
+  let target = numOrNull(sig.target);
+  let entry = sig.entry;
+
+  if (!sl || sl <= 0) {
+    sl = Math.round(price * 0.95);
+    calculated = true;
+  }
+  if (!target || target <= 0) {
+    target = Math.round(price * 1.08);
+    calculated = true;
+  }
+  if (!entry || entry === '' || entry === 'N/A') {
+    entry = `Rs ${Math.round(price * 0.99)}-Rs ${Math.round(price * 1.01)}`;
+    calculated = true;
+  }
+  return { entry, sl, target, calculated };
+}
+
+// deterministicSignal(stockData): a no-LLM fallback used when the daily budget is
+// spent. Needs a price (e.g. the last known price for the symbol). Classifies on
+// price vs a 120-day average when available, else HOLD, with calculated targets.
+export function deterministicSignal(stockData = {}) {
+  const price = numOrNull(stockData.price);
+  if (!price || price <= 0) return null;
+
+  const avg = numOrNull(stockData.avg120) || price;
+  let signal = 'HOLD';
+  if (price > avg * 1.02) signal = 'WATCH';
+  else if (price < avg * 0.98) signal = 'NEUTRAL';
+
+  const t = calcTargets({}, price);
+  return {
+    symbol: stockData.symbol,
+    signal,
+    confidence: 'LOW',
+    price,
+    entry: t.entry,
+    sl: t.sl,
+    target: t.target,
+    hold: null,
+    why: 'Deterministic signal (LLM budget reached). Based on price vs 120-day average.',
+    risk: 'Auto-generated without live analysis — verify before acting.',
+    action: null,
+    source: 'deterministic',
+    sector: stockData.sector || null,
+    live_data: { ...stockData, price, targets_calculated: true },
   };
 }
 

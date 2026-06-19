@@ -2,7 +2,7 @@ import { getSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery, scanOneStock, runBrief } from '@/lib/scan';
 import { getWeightContext } from '@/lib/calibration';
 import { checkOutcomes } from '@/lib/outcomes';
-import { KV, DEFAULT_WATCHLIST } from '@/lib/constants';
+import { KV } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -145,6 +145,6 @@ async function loadWatchlist(supabase) {
     .maybeSingle();
   const value = data?.value;
   const list = Array.isArray(value) ? value : Array.isArray(value?.symbols) ? value.symbols : [];
-  const symbols = list.map((s) => (typeof s === 'string' ? s : s?.symbol)).filter(Boolean);
-  return symbols.length ? symbols : [...DEFAULT_WATCHLIST];
+  // Discovery-driven: no hardcoded fallback (watchlist is promotion-derived).
+  return list.map((s) => (typeof s === 'string' ? s : s?.symbol)).filter(Boolean);
 }

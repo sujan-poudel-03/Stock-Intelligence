@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
-import { scanOneStock } from '@/lib/scan';
+import { scanOneStock, deterministicSignal } from '@/lib/scan';
 import { getWeightContext } from '@/lib/calibration';
 import { runBackground, triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
@@ -92,23 +92,39 @@ async function claimJob(supabase, { symbol, force }) {
 async function processJob(supabase, job, origin) {
   const scanId = job.scan_id;
 
-  // Budget-aware skip: if we can't afford a full stock scan, skip cleanly so the
-  // run finishes as 'partial' instead of producing a junk signal or 429-failing.
+  // Budget-saver mode: when the daily LLM budget is spent, don't vanish — emit a
+  // clearly-marked deterministic signal from the symbol's last known price. If we
+  // have no prior price to work from, skip the stock cleanly (scan ends 'partial').
   if ((await remaining()) < CALLS_PER_STOCK) {
-    await supabase
-      .from('scan_jobs')
-      .update({
-        status: 'skipped',
-        error: 'daily LLM budget reached',
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', job.id);
-    await logEvent(supabase, {
-      scanId,
-      type: 'job_skipped',
-      symbol: job.symbol,
-      message: `${job.symbol} skipped — daily AI budget reached`,
-    });
+    const lastPrice = await lastKnownPrice(supabase, job.symbol);
+    const fallback = lastPrice ? deterministicSignal({ symbol: job.symbol, price: lastPrice }) : null;
+
+    if (fallback) {
+      await insertSignal(supabase, scanId, fallback);
+      await supabase
+        .from('scan_jobs')
+        .update({ status: 'done', result: fallback, error: 'budget-saver (deterministic)', completed_at: new Date().toISOString() })
+        .eq('id', job.id);
+      await bumpCompleted(supabase, scanId, 'completed');
+      await logEvent(supabase, {
+        scanId,
+        type: 'budget_saver',
+        symbol: job.symbol,
+        message: `${job.symbol}: deterministic signal — budget-saver mode active`,
+        data: { signal: fallback.signal, price: fallback.price },
+      });
+    } else {
+      await supabase
+        .from('scan_jobs')
+        .update({ status: 'skipped', error: 'daily LLM budget reached (no prior price)', completed_at: new Date().toISOString() })
+        .eq('id', job.id);
+      await logEvent(supabase, {
+        scanId,
+        type: 'job_skipped',
+        symbol: job.symbol,
+        message: `${job.symbol} skipped — budget reached, no prior price`,
+      });
+    }
     await chainNext(supabase, scanId, origin);
     return;
   }
@@ -126,30 +142,7 @@ async function processJob(supabase, job, origin) {
     const weightCtx = await getWeightContext(job.symbol, null);
     const signal = await scanOneStock(job.symbol, scan?.market || {}, weightCtx);
 
-    // Persist the signal.
-    const { data: savedSignal } = await supabase
-      .from('signals')
-      .insert({
-        scan_id: scanId,
-        symbol: signal.symbol,
-        signal: signal.signal,
-        confidence: signal.confidence,
-        price: signal.price,
-        entry: signal.entry,
-        sl: signal.sl,
-        target: signal.target,
-        hold: signal.hold,
-        why: signal.why,
-        risk: signal.risk,
-        action: signal.action,
-        source: signal.source,
-        sector: signal.sector,
-        live_data: signal.live_data,
-        outcome: 'PENDING',
-        created_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
+    await insertSignal(supabase, scanId, signal);
 
     // Mark job done.
     await supabase
@@ -182,7 +175,11 @@ async function processJob(supabase, job, origin) {
     const message = err?.message || String(err);
     const attempt = job.attempt || 1;
 
-    if (attempt >= MAX_ATTEMPTS) {
+    // FIX 4 — 'no data from source' is not worth retrying (and retries burn
+    // budget); fail it immediately so it lands on the failed surface.
+    const noData = /no data from source/i.test(message);
+
+    if (noData || attempt >= MAX_ATTEMPTS) {
       await supabase
         .from('scan_jobs')
         .update({ status: 'permanently_failed', error: message, completed_at: new Date().toISOString() })
@@ -207,6 +204,43 @@ async function processJob(supabase, job, origin) {
 
   // Chain: more work -> next worker; otherwise -> brief.
   await chainNext(supabase, scanId, origin);
+}
+
+// Persist one signal row. Shared by the normal path and budget-saver fallback.
+async function insertSignal(supabase, scanId, signal) {
+  await supabase.from('signals').insert({
+    scan_id: scanId,
+    symbol: signal.symbol,
+    signal: signal.signal,
+    confidence: signal.confidence,
+    price: signal.price,
+    entry: signal.entry,
+    sl: signal.sl,
+    target: signal.target,
+    hold: signal.hold,
+    why: signal.why,
+    risk: signal.risk,
+    action: signal.action,
+    source: signal.source,
+    sector: signal.sector,
+    live_data: signal.live_data,
+    outcome: 'PENDING',
+    created_at: new Date().toISOString(),
+  });
+}
+
+// Most recent non-null price for a symbol, for the budget-saver deterministic
+// fallback. Returns a number or null.
+async function lastKnownPrice(supabase, symbol) {
+  const { data } = await supabase
+    .from('signals')
+    .select('price')
+    .eq('symbol', symbol)
+    .not('price', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  const p = Number(data?.[0]?.price);
+  return Number.isFinite(p) && p > 0 ? p : null;
 }
 
 // Increment scans.completed or scans.failed by reading + writing (no RPC needed).

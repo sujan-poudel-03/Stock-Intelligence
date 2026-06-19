@@ -395,6 +395,8 @@ const SIGNAL_COLOR = {
   BUY: { bg: '#0f2e1c', fg: '#34d399', bd: '#1f7a4d' },
   SELL: { bg: '#3a1418', fg: '#f87171', bd: '#9b2c34' },
   HOLD: { bg: '#332710', fg: '#fbbf24', bd: '#8a6516' },
+  WATCH: { bg: '#10243f', fg: '#60a5fa', bd: '#2b5da8' },
+  NEUTRAL: { bg: '#22262e', fg: '#9aa3b2', bd: '#3a4151' },
   AVOID: { bg: '#22262e', fg: '#9aa3b2', bd: '#3a4151' },
 };
 

@@ -6,7 +6,6 @@ import { logEvent } from '@/lib/events';
 import { withGuard } from '@/lib/respond';
 import {
   KV,
-  DEFAULT_WATCHLIST,
   SCAN_GUARD_MS,
   checkCronAuth,
 } from '@/lib/constants';
@@ -192,8 +191,10 @@ async function loadWatchlist(supabase) {
 
   const value = data?.value;
   const list = Array.isArray(value) ? value : Array.isArray(value?.symbols) ? value.symbols : [];
-  const symbols = list.map((s) => (typeof s === 'string' ? s : s?.symbol)).filter(Boolean);
-  return symbols.length ? symbols : [...DEFAULT_WATCHLIST];
+  // Discovery-driven: no hardcoded fallback. The watchlist is an OUTPUT of the
+  // promotion engine (symbols that keep recurring in discovery), so early on it
+  // is empty and the scan runs on discovered movers alone.
+  return list.map((s) => (typeof s === 'string' ? s : s?.symbol)).filter(Boolean);
 }
 
 async function loadSettings(supabase) {

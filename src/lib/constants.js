@@ -21,9 +21,6 @@ export const KV = {
   SETTINGS: 'ni:settings',
 };
 
-// Fallback watchlist used when ni:wl is empty.
-export const DEFAULT_WATCHLIST = ['NABIL', 'NICA', 'UPPER', 'HDL', 'CHCL', 'SHIVM'];
-
 // Idempotency / liveness windows.
 export const SCAN_GUARD_MS = 30 * 60 * 1000; // skip new scan if one started < 30 min ago
 export const STALE_JOB_MS = 90 * 1000; // reclaim running jobs older than 90s

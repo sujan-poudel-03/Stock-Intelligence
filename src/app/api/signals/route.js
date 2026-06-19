@@ -5,7 +5,7 @@ import { withGuard } from '@/lib/respond';
 export const dynamic = 'force-dynamic';
 
 // Display order: actionable signals first, then watch-side, then avoid.
-const SIGNAL_RANK = { BUY: 0, SELL: 1, HOLD: 2, AVOID: 3 };
+const SIGNAL_RANK = { BUY: 0, SELL: 1, HOLD: 2, WATCH: 3, NEUTRAL: 4, AVOID: 5 };
 const CONF_RANK = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 // GET /api/signals -> the latest scan's per-symbol trade signals for the UI.

@@ -3,18 +3,48 @@ import { claudeComplete, getClaudeModel } from './providers/claude.js';
 import { remaining, spend, exhaust } from './budget.js';
 
 // LLM provider adapter. The rest of the app calls callLLM() and never depends
-// on a specific vendor. Switch providers with the LLM_PROVIDER env var:
-//   LLM_PROVIDER=gemini  (default, used for the initial build)
-//   LLM_PROVIDER=claude  (switch once the Claude path is ready)
+// on a specific vendor. Two ways to choose the model:
+//   NEPSE_MODEL=<model>  single knob — sets the model AND infers the provider
+//                        (e.g. claude-sonnet-4-6 -> claude, gemini-1.5-flash -> gemini)
+//   LLM_PROVIDER=gemini|claude  + GEMINI_MODEL — used when NEPSE_MODEL is unset
+// NEPSE_MODEL wins when set, so flipping a single var switches everything (handy
+// for testing on Anthropic credits or a higher-quota Gemini model).
+
+function modelIsClaude(m) {
+  return /claude|anthropic|sonnet|opus|haiku/i.test(m || '');
+}
+function modelIsGemini(m) {
+  return /gemini|gemma/i.test(m || '');
+}
 
 export function getProvider() {
-  return (process.env.LLM_PROVIDER || 'gemini').toLowerCase();
+  const m = process.env.NEPSE_MODEL || '';
+  let want = null;
+  if (modelIsClaude(m)) want = 'claude';
+  else if (modelIsGemini(m)) want = 'gemini';
+  if (!want) want = (process.env.LLM_PROVIDER || 'gemini').toLowerCase();
+  if (want === 'anthropic') want = 'claude';
+
+  // Graceful fallback: never select a provider we have no API key for, so a stale
+  // NEPSE_MODEL can't silently break every call (the wrong-key footgun).
+  if (want === 'claude' && !process.env.ANTHROPIC_API_KEY && process.env.GEMINI_API_KEY) {
+    return 'gemini';
+  }
+  if (want === 'gemini' && !process.env.GEMINI_API_KEY && process.env.ANTHROPIC_API_KEY) {
+    return 'claude';
+  }
+  return want;
 }
 
 export function getModel() {
-  return getProvider() === 'claude' || getProvider() === 'anthropic'
-    ? getClaudeModel()
-    : getGeminiModel();
+  const provider = getProvider();
+  const m = process.env.NEPSE_MODEL;
+  // Honor NEPSE_MODEL only when it matches the resolved provider; otherwise the
+  // provider's own default (so a claude model string never gets sent to Gemini).
+  if (m && ((provider === 'claude' && modelIsClaude(m)) || (provider === 'gemini' && modelIsGemini(m)))) {
+    return m;
+  }
+  return provider === 'claude' ? getClaudeModel() : getGeminiModel();
 }
 
 /**
@@ -27,6 +57,8 @@ export function getModel() {
  */
 export async function callLLM(prompt, options = {}) {
   const provider = getProvider();
+  // Resolve the model once so NEPSE_MODEL drives whichever provider is selected.
+  options = { ...options, model: options.model || getModel() };
 
   // Budget guard: skip cleanly when the daily quota is spent. Returning '' is
   // safe — every call site tolerates empty text (parseJson -> null -> defaults),
