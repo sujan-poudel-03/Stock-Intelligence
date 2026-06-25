@@ -32,6 +32,7 @@ export const GET = withGuard(async () => {
       stalled: false,
       failed_jobs: [],
       skipped_jobs: [],
+      market: null,
       last_updated: null,
       last_scan_at: null,
       last_scan_status: null,
@@ -87,6 +88,9 @@ export const GET = withGuard(async () => {
       const h = humanizeError(j.error);
       return { symbol: j.symbol, kind: h.kind, message: h.message };
     }),
+    // Latest market read (index / sentiment / gainers / losers) so the Today tab
+    // can render the market header + movers without a separate fetch.
+    market: scan.market || null,
     last_updated: lastUpdated,
     last_scan_at: scan.completed_at || scan.started_at,
     last_scan_status: scan.status,

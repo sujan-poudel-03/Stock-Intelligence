@@ -84,10 +84,12 @@ async function handle(request) {
   // 3. Resolve watchlist + (full mode only) run discovery. Light mode scans the
   // watchlist only — no discovery LLM call.
   const watchlist = await loadWatchlist(supabase);
+  const settings = await loadSettings(supabase);
   let discovered = [];
-  if (mode === 'full') {
+  // Full mode runs discovery unless the V1 Settings tab turned it off.
+  if (mode === 'full' && settings.discovery_on !== false) {
     try {
-      discovered = await runDiscovery(market, await loadSettings(supabase));
+      discovered = await runDiscovery(market, settings);
     } catch (err) {
       console.error('discovery failed:', err?.message || err);
     }

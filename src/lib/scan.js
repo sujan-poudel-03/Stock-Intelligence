@@ -46,7 +46,9 @@ Return ONLY a JSON object with this exact shape (no prose, no markdown):
 // `movers` is the market object from scanMarket(). settings.discoverCount = N.
 // ---------------------------------------------------------------------------
 export async function runDiscovery(movers, settings = {}) {
-  const n = settings.discoverCount || 8;
+  // Accept either the V2 key (discoverCount) or the V1 Settings-tab key
+  // (discovery_depth) so the ported UI steers discovery directly.
+  const n = settings.discoverCount || settings.discovery_depth || 8;
   const gainers = (movers?.gainers || []).map((g) => g.symbol).filter(Boolean);
   const losers = (movers?.losers || []).map((l) => l.symbol).filter(Boolean);
   const pool = [...new Set([...gainers, ...losers])];
@@ -54,11 +56,21 @@ export async function runDiscovery(movers, settings = {}) {
   if (pool.length === 0) return [];
   if (pool.length <= n) return pool.slice(0, n);
 
+  // Sector focus (V1 Settings): when a subset of sectors is enabled, bias
+  // discovery toward them. All-on (or unset) means no bias.
+  const sectorFocus = settings.sector_focus || {};
+  const enabledSectors = Object.keys(sectorFocus).filter((k) => sectorFocus[k]);
+  const allSectors = Object.keys(sectorFocus);
+  const sectorLine =
+    enabledSectors.length && enabledSectors.length < allSectors.length
+      ? `\nPrioritise these sectors when choosing: ${enabledSectors.join(', ')}.`
+      : '';
+
   const prompt = `From today's NEPSE movers, select the ${n} symbols with the best short-term swing-trade potential.
 
 Market sentiment: ${movers?.sentiment || 'NEUTRAL'}
 Top gainers: ${gainers.join(', ') || 'none'}
-Top losers: ${losers.join(', ') || 'none'}
+Top losers: ${losers.join(', ') || 'none'}${sectorLine}
 
 Pick a balanced set favouring liquidity, momentum, and clear technical setups.
 Return ONLY a JSON array of ${n} ticker strings, e.g. ["NABIL","UPPER","NICA"].`;

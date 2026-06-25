@@ -27,15 +27,24 @@ export const GET = withGuard(async () => {
   const { data: rows } = await supabase
     .from('signals')
     .select(
-      'id, symbol, signal, confidence, price, entry, sl, target, hold, why, risk, action, sector, outcome, created_at'
+      'id, symbol, signal, confidence, price, entry, sl, target, hold, why, risk, action, source, sector, live_data, outcome, created_at'
     )
     .eq('scan_id', scan.id);
 
-  const signals = (rows || []).slice().sort((a, b) => {
-    const s = (SIGNAL_RANK[a.signal] ?? 9) - (SIGNAL_RANK[b.signal] ?? 9);
-    if (s !== 0) return s;
-    return (CONF_RANK[a.confidence] ?? 9) - (CONF_RANK[b.confidence] ?? 9);
-  });
+  const signals = (rows || [])
+    .map((r) => ({
+      ...r,
+      // V1 UI reads `s.live` (live trading data) and `s.at` (timestamp); the V2
+      // schema stores these as `live_data` and `created_at`. Alias them so the
+      // ported cards render without per-field rewrites.
+      live: r.live_data || null,
+      at: r.created_at,
+    }))
+    .sort((a, b) => {
+      const s = (SIGNAL_RANK[a.signal] ?? 9) - (SIGNAL_RANK[b.signal] ?? 9);
+      if (s !== 0) return s;
+      return (CONF_RANK[a.confidence] ?? 9) - (CONF_RANK[b.confidence] ?? 9);
+    });
 
   const actionable = signals.filter((s) => s.signal === 'BUY' || s.signal === 'SELL');
 
