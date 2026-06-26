@@ -1,5 +1,5 @@
 import { callLLM, parseJson } from './llm.js';
-import { getWeightContext } from './calibration.js';
+import { getWeightContext, getOverviewContext } from './calibration.js';
 import { getKnowledgeContext } from './knowledge.js';
 
 // ---------------------------------------------------------------------------
@@ -66,11 +66,23 @@ export async function runDiscovery(movers, settings = {}) {
       ? `\nPrioritise these sectors when choosing: ${enabledSectors.join(', ')}.`
       : '';
 
+  // Learned context: bias selection toward signal+sector slices that have
+  // historically won. Best-effort — discovery must still run with no track record.
+  let trackRecord = '';
+  try {
+    trackRecord = await getOverviewContext();
+  } catch {
+    /* no track record / weights unavailable — proceed without it */
+  }
+  const trackLine = trackRecord
+    ? `\n\nAGENT TRACK RECORD (favour movers in slices that have historically won; avoid chronically losing ones):\n${trackRecord}`
+    : '';
+
   const prompt = `From today's NEPSE movers, select the ${n} symbols with the best short-term swing-trade potential.
 
 Market sentiment: ${movers?.sentiment || 'NEUTRAL'}
 Top gainers: ${gainers.join(', ') || 'none'}
-Top losers: ${losers.join(', ') || 'none'}${sectorLine}
+Top losers: ${losers.join(', ') || 'none'}${sectorLine}${trackLine}
 
 Pick a balanced set favouring liquidity, momentum, and clear technical setups.
 Return ONLY a JSON array of ${n} ticker strings, e.g. ["NABIL","UPPER","NICA"].`;
@@ -261,6 +273,15 @@ export async function runBrief(signals = [], marketData = {}, portfolio = []) {
     sl: s.sl,
   }));
 
+  // Learned context: let the brief calibrate how strongly to push picks against
+  // the agent's real hit rate. Best-effort — never block the brief on it.
+  let trackRecord = '';
+  try {
+    trackRecord = await getOverviewContext();
+  } catch {
+    /* no track record yet — write the brief without it */
+  }
+
   const prompt = `You are the lead analyst writing today's NEPSE trading brief.
 
 MARKET:
@@ -271,6 +292,9 @@ ${JSON.stringify(summary, null, 2)}
 
 CURRENT PORTFOLIO:
 ${JSON.stringify(portfolio, null, 2)}
+
+AGENT TRACK RECORD (calibrate conviction to this — don't over-promise on weak slices):
+${trackRecord || 'No track record yet.'}
 
 Return ONLY JSON:
 {

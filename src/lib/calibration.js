@@ -116,6 +116,44 @@ export async function getWeightContext(symbol, sector) {
   return parts.join('. ');
 }
 
+/**
+ * getOverviewContext()
+ * Symbol-agnostic track record for consumers that reason over the whole book
+ * rather than one stock — discovery, the daily brief, and the chat advisor.
+ * Returns the overall win rate plus a leaderboard of the best signal+sector
+ * slices (>=2 trades), e.g.:
+ *   "Overall agent win rate: 68% from 25 trades (avg return 1.9%). By
+ *    signal+sector — BUY_banks: 78% (9 trades, avg +3.1%); SELL_hydropower: 60% (5 trades, avg +0.8%)."
+ * Returns '' when there is no track record yet.
+ */
+export async function getOverviewContext() {
+  const supabase = getSupabase();
+  const { data } = await supabase.from('weights').select('*');
+  if (!data || data.length === 0) return '';
+
+  const byKey = Object.fromEntries(data.map((w) => [w.key, w]));
+  const parts = [];
+
+  const all = byKey['ALL'];
+  if (all && all.wins + all.losses > 0) {
+    parts.push(
+      `Overall agent win rate: ${pct(all.rate)} from ${all.wins + all.losses} trades (avg return ${num(all.avg_return)}%).`
+    );
+  }
+
+  // Leaderboard across BUY_*/SELL_* slices with enough trades to be meaningful,
+  // ranked by win rate then sample size. Cap at the top 6 so the prompt stays tight.
+  const slices = data
+    .filter((w) => /^(BUY|SELL)_/.test(w.key) && w.wins + w.losses >= 2)
+    .sort((a, b) => b.rate - a.rate || b.wins + b.losses - (a.wins + a.losses))
+    .slice(0, 6)
+    .map((w) => `${w.key}: ${pct(w.rate)} (${w.wins + w.losses} trades, avg ${num(w.avg_return)}%)`);
+
+  if (slices.length) parts.push(`By signal+sector — ${slices.join('; ')}.`);
+
+  return parts.join(' ');
+}
+
 function slug(s) {
   return String(s).trim().toLowerCase().replace(/\s+/g, '_');
 }

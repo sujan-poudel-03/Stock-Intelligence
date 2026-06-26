@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { callLLM } from '@/lib/llm';
 import { withGuard } from '@/lib/respond';
 import { remaining } from '@/lib/budget';
+import { getOverviewContext } from '@/lib/calibration';
+import { getKnowledgeContext } from '@/lib/knowledge';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -49,12 +51,31 @@ export const POST = withGuard(async (request) => {
     ? `${market.index ?? '?'} ${market.changePct ?? market.change_pct ?? '?'}% ${market.sentiment ?? 'NEUTRAL'}`
     : 'unknown';
 
+  // Learned context: the advisor should reason from the agent's own track record
+  // (overall hit rate + per-slice leaderboard) and the durable lessons accrued on
+  // the symbols the user actually holds. Best-effort — chat must answer even with
+  // no history or weights table unavailable.
+  let learned = '';
+  try {
+    const overview = await getOverviewContext();
+    const posSyms = [...new Set(openPos.map((p) => p.symbol).filter(Boolean))].slice(0, 4);
+    const notes = (
+      await Promise.all(posSyms.map((s) => getKnowledgeContext(s, null).catch(() => '')))
+    ).filter(Boolean);
+    learned = [overview, ...notes].filter(Boolean).join('\n\n');
+  } catch {
+    /* no learned context available — advise without it */
+  }
+  const learnedBlock = learned
+    ? `\nAGENT TRACK RECORD & LESSONS (this is your own past performance — weigh it, cite it when relevant):\n${learned}\n`
+    : '';
+
   const system = `You are a sharp, direct NEPSE (Nepal Stock Exchange) trading advisor.
 Open positions (${openPos.length}): ${portStr}.
 Today's signals: ${sigStr}.
 Market: ${mktStr}.
 Watchlist: ${watchlist.join(', ') || 'empty'}.
-NEPSE charges: broker 0.4% (min Rs10), SEBON 0.0015%, DP Rs25, CGT 7.5% (<1yr) / 5% (>=1yr).
+${learnedBlock}NEPSE charges: broker 0.4% (min Rs10), SEBON 0.0015%, DP Rs25, CGT 7.5% (<1yr) / 5% (>=1yr).
 Be concise and concrete — at most 5 short lines. Search the web for live prices/news when the question needs current data.`;
 
   const reply = await callLLM(message, { system, webSearch: true, maxTokens: 700 });
