@@ -1,6 +1,7 @@
 import { callLLM, parseJson } from './llm.js';
 import { getWeightContext, getOverviewContext } from './calibration.js';
 import { getKnowledgeContext } from './knowledge.js';
+import { getVerifiedPrice } from './marketProviders.js';
 
 // ---------------------------------------------------------------------------
 // scanMarket(): fetch NEPSE index, gainers, losers, turnover via web search.
@@ -106,18 +107,28 @@ Return ONLY a JSON array of ${n} ticker strings, e.g. ["NABIL","UPPER","NICA"].`
 //   is looked up via getWeightContext().
 // ---------------------------------------------------------------------------
 export async function scanOneStock(symbol, marketData = {}, weights = null, knowledge = null) {
-  // Calibration + learned knowledge are keyed by symbol (and sector once known).
-  // We fetch them up front with a null sector — the single grounded call below
-  // both pulls live data AND emits the signal, so there's no intermediate step
-  // at which the sector is known. This halves per-stock LLM cost (1 call, not 2)
-  // and the rate-limit pressure that comes with it.
+  // Ground truth FIRST (CLAUDE.md guardrail #1): the price comes from the verified
+  // data layer, NEVER the LLM. If we can't verify a price, there is no usable
+  // signal — throw 'no data from source' so the worker fails the job (retry surface)
+  // instead of persisting a hollow or hallucinated card. Late-but-true is fine: the
+  // verified layer accepts an hours-old quote and just flags it stale.
+  const verified = await getVerifiedPrice(symbol);
+  if (!verified.verified) {
+    throw new Error(`no data from source: ${symbol}`);
+  }
+  const price = verified.price;
+
   const weightContext = weights != null ? weights : await getWeightContext(symbol, null);
   const knowledgeContext = knowledge != null ? knowledge : await getKnowledgeContext(symbol, null);
 
-  const prompt = `You are a disciplined NEPSE swing-trading analyst. Research stock "${symbol}" and produce ONE trade signal.
+  const asOfText = verified.asOf ? new Date(verified.asOf).toISOString() : 'recent';
+  const prompt = `You are a disciplined NEPSE swing-trading analyst. Produce ONE trade signal for "${symbol}".
 
-STEP 1 — Search merolagani.com (and sharesansar.com as backup) for ${symbol}'s current trading data: last price, day change, 52-week high/low, volume, sector, P/E.
-STEP 2 — Using that live data plus the context below, decide the signal.
+The current price is VERIFIED and GIVEN below — do NOT look it up, change it, or output a different price. Treat it as ground truth:
+  VERIFIED PRICE: ${price}  (as of ${asOfText}${verified.stale ? ', slightly delayed' : ''}; sources: ${verified.sources.join('+')})
+
+STEP 1 — Research ${symbol} on merolagani.com / sharesansar.com for CONTEXT ONLY: 52-week high/low, volume, sector, P/E, recent news. Do NOT override the verified price with anything you read.
+STEP 2 — Decide the signal using the verified price plus that context and the learned context below.
 
 MARKET CONTEXT:
 Index: ${marketData.index ?? 'n/a'} (${marketData.changePct ?? 'n/a'}%), sentiment: ${marketData.sentiment ?? 'NEUTRAL'}
@@ -128,10 +139,9 @@ ${weightContext || 'No prior track record yet.'}
 LEARNED KNOWLEDGE (past outcomes & notes for this stock/sector — apply these lessons):
 ${knowledgeContext || 'No accumulated knowledge yet.'}
 
-Return ONLY JSON with this exact shape (no prose, no markdown):
+Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a price field:
 {
   "symbol": "${symbol}",
-  "price": <last traded price as number>,
   "change": <day change as number or null>,
   "changePct": <day percent change as number or null>,
   "high52": <52-week high or null>,
@@ -155,23 +165,18 @@ Return ONLY JSON with this exact shape (no prose, no markdown):
     webFetch: true,
     maxTokens: 2500,
     system:
-      'You are a NEPSE research + trading signal agent. Fetch live data, then return only valid JSON. Be disciplined and risk-aware.',
+      'You are a NEPSE research + trading signal agent. The price is given and verified — never change it. Return only valid JSON. Be disciplined and risk-aware.',
   });
 
+  // Budget spent / LLM unavailable => r is {} and every field below falls back to a
+  // safe default. We still have a VERIFIED price, so this yields a real (if shallow)
+  // signal rather than throwing — the price guard above is the only hard gate.
   const r = parseJson(text) || {};
   const sector = r.sector || null;
-  const price = numOrNull(r.price);
 
-  // FIX 4 — never persist a hollow signal. No price => no usable signal; throw so
-  // the worker surfaces this as a failed job (red badge + retry) instead of saving
-  // an empty card. (deterministicSignal handles the budget-exhausted case upstream
-  // using a last-known price.)
-  if (!price || price <= 0) {
-    throw new Error(`no data from source: ${symbol}`);
-  }
-
-  // Preserve the live-data subset we used to store separately, for outcome
-  // auditing and the UI's live_data view.
+  // live_data carries the verified price + provenance (source, freshness) so the UI
+  // can honestly show "as of …" and which sources agreed. price is ALWAYS the
+  // verified number — r.price is intentionally ignored (and no longer requested).
   const live = {
     symbol,
     price,
@@ -182,10 +187,13 @@ Return ONLY JSON with this exact shape (no prose, no markdown):
     volume: numOrNull(r.volume),
     pe: numOrNull(r.pe),
     sector,
+    asOf: verified.asOf ?? null,
+    stale: !!verified.stale,
+    sources: verified.sources,
   };
 
-  // FIX 2 — fill any missing/zero targets deterministically so every persisted
-  // signal has real sl/target/entry. Keeps the model's signal verb + rationale.
+  // Fill any missing/zero targets deterministically from the verified price, so
+  // every persisted signal has real sl/target/entry. Keeps the model's verb + why.
   const t = calcTargets({ entry: r.entry, sl: numOrNull(r.sl), target: numOrNull(r.target) }, price);
 
   return {
@@ -200,7 +208,7 @@ Return ONLY JSON with this exact shape (no prose, no markdown):
     why: r.why || null,
     risk: r.risk || null,
     action: r.action || null,
-    source: 'merolagani',
+    source: verified.sources.join('+') || 'verified',
     sector,
     live_data: { ...live, targets_calculated: t.calculated },
   };

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { scanOneStock, deterministicSignal } from '@/lib/scan';
+import { getVerifiedPrice } from '@/lib/marketProviders';
 import { getWeightContext } from '@/lib/calibration';
 import { runBackground, triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
@@ -96,8 +97,11 @@ async function processJob(supabase, job, origin) {
   // clearly-marked deterministic signal from the symbol's last known price. If we
   // have no prior price to work from, skip the stock cleanly (scan ends 'partial').
   if ((await remaining()) < CALLS_PER_STOCK) {
-    const lastPrice = await lastKnownPrice(supabase, job.symbol);
-    const fallback = lastPrice ? deterministicSignal({ symbol: job.symbol, price: lastPrice }) : null;
+    // Prefer a live VERIFIED price (no LLM cost); fall back to the last known price
+    // from a prior signal only if no source can verify one right now.
+    const verified = await getVerifiedPrice(job.symbol).catch(() => null);
+    const price = verified?.verified ? verified.price : await lastKnownPrice(supabase, job.symbol);
+    const fallback = price ? deterministicSignal({ symbol: job.symbol, price }) : null;
 
     if (fallback) {
       await insertSignal(supabase, scanId, fallback);

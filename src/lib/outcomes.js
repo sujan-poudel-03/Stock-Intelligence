@@ -1,5 +1,5 @@
 import { getSupabase } from './supabase.js';
-import { callLLM, parseJson } from './llm.js';
+import { getVerifiedPrice } from './marketProviders.js';
 import { updateWeights } from './calibration.js';
 import { recordOutcomeKnowledge } from './knowledge.js';
 import { logEvent } from './events.js';
@@ -94,28 +94,25 @@ export async function checkOutcomes() {
   return { checked: pending.length, resolved: resolved.length, outcomes: resolved };
 }
 
-// Fetch latest prices for a batch of NEPSE symbols via web search.
+// Fetch latest VERIFIED prices for a batch of NEPSE symbols. Outcome resolution
+// decides real money (WIN at target / LOSS at stop), so the exit price must be
+// ground truth — never LLM-sourced (CLAUDE.md guardrail #1). Any symbol whose
+// price can't be verified maps to null and is simply left PENDING (retried next run).
 async function fetchLatestPrices(symbols) {
   if (!symbols.length) return {};
 
-  const prompt = `Search merolagani.com for the current last-traded price of these NEPSE stocks: ${symbols.join(', ')}.
-
-Return ONLY a JSON object mapping symbol -> price, e.g. {"NABIL": 530.5, "UPPER": 210}.
-Use null for any symbol you cannot find.`;
-
-  const text = await callLLM(prompt, {
-    webSearch: true,
-    webFetch: true,
-    maxTokens: 1000,
-    system: 'You are a NEPSE price extraction agent. Return only a JSON object of symbol->price.',
-  });
-
-  const map = parseJson(text) || {};
   const out = {};
-  for (const [k, v] of Object.entries(map)) {
-    const n = Number(v);
-    out[k.toUpperCase()] = Number.isFinite(n) ? n : null;
-  }
+  await Promise.all(
+    symbols.map(async (sym) => {
+      const key = String(sym).toUpperCase();
+      try {
+        const r = await getVerifiedPrice(sym);
+        out[key] = r.verified ? r.price : null;
+      } catch {
+        out[key] = null;
+      }
+    })
+  );
   return out;
 }
 

@@ -10,6 +10,8 @@
     "prestart": "node scripts/preflight.mjs --mode=startup",
     "start": "next start -p 3001",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "doctor": "node scripts/preflight.mjs --mode=doctor"
   },
   "dependencies": {
@@ -25,6 +27,7 @@
   "devDependencies": {
     "eslint": "^8.57.0",
     "eslint-config-next": "14.2.15",
-    "supabase": "^2.106.0"
+    "supabase": "^2.106.0",
+    "vitest": "^4.1.10"
   }
 }

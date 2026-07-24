@@ -79,14 +79,19 @@ create index if not exists scan_jobs_scan_id_idx on scan_jobs (scan_id);
 create index if not exists scan_jobs_status_idx  on scan_jobs (status);
 
 -- 5. weights — calibration learning per key (e.g. BUY_banks)
+-- wins/losses/rate/avg_return are lifetime; dwins/dlosses are EWMA time-decayed
+-- counts (recent-regime, non-stationarity) with last_outcome_at as the decay clock.
 create table if not exists weights (
-  id         uuid primary key default gen_random_uuid(),
-  key        text unique,
-  wins       int default 0,
-  losses     int default 0,
-  rate       numeric default 0,
-  avg_return numeric default 0,
-  updated_at timestamptz default now()
+  id              uuid primary key default gen_random_uuid(),
+  key             text unique,
+  wins            int default 0,
+  losses          int default 0,
+  rate            numeric default 0,
+  avg_return      numeric default 0,
+  dwins           numeric default 0,
+  dlosses         numeric default 0,
+  last_outcome_at timestamptz,
+  updated_at      timestamptz default now()
 );
 
 -- 6. outcomes — resolved trade outcomes log

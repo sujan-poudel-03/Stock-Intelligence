@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { dbGet, dbSet } from '@/lib/clientStorage';
+import AdminDataSources from '@/components/AdminDataSources';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -986,6 +987,9 @@ export default function NepseApp() {
                   })}
                 </div>
               </div>
+
+              {/* Data Sources */}
+              <AdminDataSources />
 
               {/* Discovery */}
               <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
