@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { withGuard } from '@/lib/respond';
+import { requireAdmin } from '@/lib/auth';
 import { listProviders, getActiveSources, setActiveSources } from '@/lib/marketProviders';
 
 export const dynamic = 'force-dynamic';
 
 // GET /api/admin/sources -> available market-data providers + the active selection.
-// NOTE: unauthenticated by design while the app is single-tenant (like /api/storage).
-// A real admin auth gate is Phase 2 (multi-tenant). Do not expose this publicly as-is.
+// Read-only status; safe to leave open (reveals no secrets).
 export const GET = withGuard(async () => {
   const [providers, active] = await Promise.all([
     Promise.resolve(listProviders()),
@@ -15,8 +15,12 @@ export const GET = withGuard(async () => {
   return NextResponse.json({ providers, active });
 });
 
-// POST /api/admin/sources { active: ["merolagani","sharesansar"] } -> persist selection.
+// POST /api/admin/sources { active: [...] } -> persist selection. ADMIN-ONLY
+// (server-enforced when ADMIN_EMAILS is set; open while single-operator).
 export const POST = withGuard(async (request) => {
+  const gate = await requireAdmin(request);
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
+
   const body = await request.json().catch(() => ({}));
   const requested = Array.isArray(body?.active)
     ? body.active

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { dbGet, dbSet } from '@/lib/clientStorage';
 import AdminDataSources from '@/components/AdminDataSources';
+import AdminChannels from '@/components/AdminChannels';
+import Disclaimer from '@/components/Disclaimer';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -154,6 +156,10 @@ function SegBtn(props) {
   );
 }
 
+// Track-record formatters: a 0–1 rate as a percent, and a signed percent return.
+function fmtRate(frac) { return Math.round(Number(frac) * 100) + '%'; }
+function fmtRet(pct) { const n = Number(pct); return (n >= 0 ? '+' : '') + (Math.round(n * 100) / 100) + '%'; }
+
 export default function NepseApp() {
   const [tab, setTab] = useState('today');
   const [exchange, setExchange] = useState('NEPSE');
@@ -164,6 +170,7 @@ export default function NepseApp() {
   const [market, setMarket] = useState(null);
   const [brief, setBrief] = useState(null);
   const [activity, setActivity] = useState([]);
+  const [track, setTrack] = useState(null);
   const [scanStarting, setScanStarting] = useState(false);
 
   // Client-side bookkeeping
@@ -297,6 +304,14 @@ export default function NepseApp() {
     } catch (err) { console.error('activity load failed:', err); }
   }, []);
 
+  const loadTrack = useCallback(async () => {
+    try {
+      const res = await fetch('/api/track-record', { cache: 'no-store' });
+      const data = await res.json();
+      if (data && data.overall) setTrack(data);
+    } catch (err) { console.error('track-record load failed:', err); }
+  }, []);
+
   // -- status polling ---------------------------------------------------------
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -364,6 +379,11 @@ export default function NepseApp() {
   useEffect(() => {
     if (sidebarEnd.current) sidebarEnd.current.scrollIntoView({ behavior: 'smooth' });
   }, [chat, chatLoading]);
+
+  // Load the agent's real track record the first time the tab is opened.
+  useEffect(() => {
+    if (tab === 'track' && !track) loadTrack();
+  }, [tab, track, loadTrack]);
 
   // -- actions ----------------------------------------------------------------
   const scanNow = useCallback(async () => {
@@ -488,6 +508,7 @@ export default function NepseApp() {
     { k: 'today', label: 'Today' },
     { k: 'positions', label: 'Positions' + (noSLCount > 0 ? ' !' : '') },
     { k: 'signals', label: 'Signals' },
+    { k: 'track', label: 'Track Record' },
     { k: 'watchlist', label: 'Watch ' + watchlist.length },
   ];
 
@@ -567,6 +588,9 @@ export default function NepseApp() {
           </div>
         )}
       </div>
+
+      {/* DISCLAIMER — persistent, on every surface (guardrail #2 + sample-data flag) */}
+      <Disclaimer />
 
       {/* ACTIVITY PANEL */}
       {showLog && (
@@ -884,6 +908,87 @@ export default function NepseApp() {
             </div>
           )}
 
+          {/* TRACK RECORD */}
+          {tab === 'track' && (
+            <div className="fadeup">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Track Record</div>
+                  <div style={{ fontSize: 10, color: '#4a5568' }}>The agent&apos;s real, verified WIN/LOSS history — losses included. Past performance ≠ future results.</div>
+                </div>
+                <button onClick={loadTrack} style={{ fontSize: 9, color: '#2a3550', background: 'none', border: '1px solid #1e2840', borderRadius: 3, padding: '3px 8px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>refresh</button>
+              </div>
+
+              {!track ? (
+                <div style={{ fontSize: 11, color: '#4a5568', padding: '16px 0' }}>Loading…</div>
+              ) : track.overall.trades === 0 ? (
+                <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '20px 18px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 12, color: '#c8d4e8', marginBottom: 6 }}>No resolved outcomes yet.</div>
+                  <div style={{ fontSize: 10, color: '#4a5568' }}>As BUY/SELL signals hit their target or stop-loss, the real record builds here.{track.pending ? ' ' + track.pending + ' pending.' : ''}</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: 8, marginBottom: 12 }}>
+                    {[
+                      { l: 'win rate', v: fmtRate(track.overall.winRate), c: '#3b82f6' },
+                      { l: 'conservative', v: fmtRate(track.overall.confidence), c: '#8b5cf6' },
+                      { l: 'avg return', v: fmtRet(track.overall.avgReturn), c: track.overall.avgReturn >= 0 ? '#10b981' : '#ef4444' },
+                      { l: 'record', v: track.overall.wins + 'W / ' + track.overall.losses + 'L', c: '#e2e8f0' },
+                      { l: 'pending', v: String(track.pending), c: '#4a5568' },
+                    ].map(function (x) {
+                      return (
+                        <div key={x.l} style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px' }}>
+                          <div style={{ fontSize: 16, fontWeight: 600, color: x.c, fontFamily: 'IBM Plex Mono,monospace' }}>{x.v}</div>
+                          <div style={{ fontSize: 9, color: '#4a5568', marginTop: 2, fontFamily: 'Inter,sans-serif' }}>{x.l}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    {['BUY', 'SELL'].map(function (d) {
+                      var s = track.byDirection[d];
+                      return (
+                        <div key={d} style={{ flex: 1, background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px' }}>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: d === 'BUY' ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace', marginBottom: 4 }}>{d}</div>
+                          <div style={{ fontSize: 10, color: '#8899b4' }}>{s.trades ? (fmtRate(s.winRate) + ' win · ' + s.wins + 'W/' + s.losses + 'L · avg ' + fmtRet(s.avgReturn)) : 'no trades yet'}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {track.bySector.length > 0 && (
+                    <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', marginBottom: 8, fontFamily: 'Inter,sans-serif' }}>By sector (confidence-ranked)</div>
+                      {track.bySector.map(function (s) {
+                        return (
+                          <div key={s.sector} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #0f1420' }}>
+                            <span style={{ fontSize: 10, color: '#8899b4', fontFamily: 'Inter,sans-serif' }}>{s.sector}</span>
+                            <span style={{ fontSize: 10, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{fmtRate(s.winRate)} · {s.wins + 'W/' + s.losses + 'L'} · {fmtRet(s.avgReturn)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', margin: '4px 0 8px', fontFamily: 'Inter,sans-serif' }}>Recent outcomes</div>
+                  {track.recent.map(function (r, i) {
+                    var win = r.outcome === 'WIN';
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid #0f1420' }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: win ? '#10b981' : '#ef4444', background: (win ? '#10b981' : '#ef4444') + '22', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace', width: 34, textAlign: 'center' }}>{r.outcome}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', minWidth: 56 }}>{r.symbol}</span>
+                        <span style={{ fontSize: 9, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{r.signal}</span>
+                        <span style={{ fontSize: 9, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{(r.entry != null ? 'Rs' + r.entry : '-') + '→' + (r.exit != null ? 'Rs' + r.exit : '-')}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, color: (r.returnPct || 0) >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{r.returnPct != null ? fmtRet(r.returnPct) : '-'}</span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          )}
+
           {/* WATCHLIST */}
           {tab === 'watchlist' && (
             <div>
@@ -990,6 +1095,9 @@ export default function NepseApp() {
 
               {/* Data Sources */}
               <AdminDataSources />
+
+              {/* Notifications */}
+              <AdminChannels />
 
               {/* Discovery */}
               <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>

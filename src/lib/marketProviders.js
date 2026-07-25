@@ -1,69 +1,95 @@
-// Admin-configurable market-data providers (source abstraction).
+// Admin-configurable, config-gated market-data providers (source abstraction).
 //
 // WHICH sources feed the verified-price core (marketData.js) is an admin decision,
-// made on-screen (Settings → Data Sources) and persisted in kv_store, with an
-// env/default fallback. A "provider" is an async (symbol) => rawQuote|null plus
-// display metadata; correctness, cross-checking, and staleness annotation live in
+// made on-screen (Settings → Market Data Sources) and persisted in kv_store, with an
+// env/default fallback. A provider is an async (symbol) => rawQuote|null plus display
+// metadata. Correctness, cross-checking, and staleness annotation live in
 // marketData.js — a provider only fetches and shapes one source's number.
 //
-// status:
-//   'live'   — real market data
+// A provider can declare `requiresEnv` (env vars it needs, e.g. an API token). Until
+// those are present it is treated as NOT AVAILABLE: shown disabled in the admin UI
+// and rejected by setActiveSources — the admin cannot switch to it. When the env is
+// present it becomes selectable (admin-only). `status`:
+//   'live'   — a working implementation
 //   'sample' — deterministic FAKE quotes for setup/testing (never real decisions)
-//   'stub'   — a real source whose fetcher isn't implemented yet (returns null)
-//
-// The shipped default is `sample` so the system runs end-to-end out of the box.
-// Real sources (merolagani/sharesansar/nepalstock) are stubs until P1-1 wires their
-// endpoints + a ToS review clears them — until then they fail closed (no price).
+//   'stub'   — not yet implemented (returns null); never available
 
-import { getSupabase } from './supabase.js';
 import { verifiedPrice, resolveProviders } from './marketData.js';
 
 export const ACTIVE_SOURCES_KEY = 'ni:market_sources';
-// Default source: `sample` so the app works immediately. Swap to real sources
-// (e.g. MARKET_DATA_SOURCES=merolagani,sharesansar) once P1-1 fetchers are live.
+// Code default is the offline `sample` source so the app runs with no network/config.
+// Deployments select real sources via MARKET_DATA_SOURCES or the admin UI.
 export const DEFAULT_SOURCES = ['sample'];
 
 export const PROVIDERS = [
   {
-    id: 'sample',
-    label: 'Sample data (offline)',
-    description: 'Deterministic placeholder quotes for setup and testing. NOT real market prices — do not use for real decisions.',
-    status: 'sample',
-    fetch: fetchSample,
-  },
-  {
     id: 'merolagani',
     label: 'MeroLagani',
-    description: 'merolagani.com portal. Live fetcher pending (P1-1) + terms-of-use review.',
-    status: 'stub',
+    description: 'merolagani.com — live server-rendered quote (last price + day change).',
+    status: 'live',
+    requiresEnv: [],
     fetch: fetchMerolagani,
   },
   {
     id: 'sharesansar',
     label: 'ShareSansar',
-    description: 'sharesansar.com portal. Live fetcher pending (P1-1) + terms-of-use review.',
+    description: 'sharesansar.com — not yet implemented (price loads via a CSRF/AJAX flow).',
     status: 'stub',
+    requiresEnv: [],
     fetch: fetchSharesansar,
   },
   {
     id: 'nepalstock',
     label: 'NEPSE Official',
-    description: 'nepalstock.com.np official exchange site. Live fetcher pending (P1-1) + terms-of-use review.',
-    status: 'stub',
+    description: 'nepalstock.com.np official API. Build-ready — requires an API token to enable.',
+    status: 'live',
+    requiresEnv: ['NEPALSTOCK_API_TOKEN'],
     fetch: fetchNepalstock,
+  },
+  {
+    id: 'sample',
+    label: 'Sample data (offline)',
+    description: 'Deterministic placeholder quotes for setup/testing. NOT real market prices.',
+    status: 'sample',
+    requiresEnv: [],
+    fetch: fetchSample,
   },
 ];
 
 export const PROVIDER_REGISTRY = Object.fromEntries(PROVIDERS.map((p) => [p.id, p.fetch]));
 
-// Metadata only — safe to send to the client (no functions).
-export function listProviders() {
-  return PROVIDERS.map(({ id, label, description, status }) => ({ id, label, description, status }));
+// A provider is "configured" when every env var it requires is present + non-empty.
+function isConfigured(p, env = process.env) {
+  return (p.requiresEnv || []).every((k) => !!(env[k] && String(env[k]).trim()));
+}
+// A provider is "available" (selectable) when it's implemented AND configured.
+function isAvailable(p, env = process.env) {
+  return p.status !== 'stub' && isConfigured(p, env);
 }
 
-// Keep only known source ids, in the given order.
-export function validateSources(names) {
-  return resolveProviders(names, PROVIDER_REGISTRY).map((p) => p.name);
+// Metadata for the admin screen (no functions). `available` drives the disabled
+// state; `requiresEnv`/`configured` explain WHY a source is disabled.
+export function listProviders(env = process.env) {
+  return PROVIDERS.map((p) => ({
+    id: p.id,
+    label: p.label,
+    description: p.description,
+    status: p.status,
+    requiresEnv: p.requiresEnv || [],
+    configured: isConfigured(p, env),
+    available: isAvailable(p, env),
+  }));
+}
+
+// Keep only known, AVAILABLE source ids, in the given order. This is the gate: a
+// stub or a source with unmet env is dropped, so it can never become active.
+export function validateSources(names, env = process.env) {
+  return resolveProviders(names, PROVIDER_REGISTRY)
+    .map((p) => p.name)
+    .filter((name) => {
+      const desc = PROVIDERS.find((x) => x.id === name);
+      return desc && isAvailable(desc, env);
+    });
 }
 
 // Env/default (sync) — fallback + used by tests.
@@ -72,10 +98,11 @@ export function activeSourceNames(env = process.env) {
   return configured ? configured : DEFAULT_SOURCES.join(',');
 }
 
-// Runtime active sources: admin kv override → env → default. Best-effort on kv so a
-// storage blip falls back to config rather than breaking price lookups.
+// Runtime active sources: admin kv override → env → default, filtered to AVAILABLE.
+// Best-effort on kv so a storage blip falls back to config rather than breaking.
 export async function getActiveSources() {
   try {
+    const { getSupabase } = await import('./supabase.js');
     const supabase = getSupabase();
     const { data } = await supabase
       .from('kv_store')
@@ -91,13 +118,16 @@ export async function getActiveSources() {
   } catch {
     /* kv unreachable — fall back to env/default */
   }
-  return validateSources(activeSourceNames());
+  const fromEnv = validateSources(activeSourceNames());
+  return fromEnv.length ? fromEnv : validateSources(DEFAULT_SOURCES);
 }
 
-// Persist the admin's selection (validated) to kv_store.
+// Persist the admin's selection. Rejects any source that isn't available (stub or
+// unmet env) — an admin cannot select a disabled source.
 export async function setActiveSources(names) {
   const valid = validateSources(names);
-  if (!valid.length) throw new Error('No valid data sources selected');
+  if (!valid.length) throw new Error('No valid/available data sources selected');
+  const { getSupabase } = await import('./supabase.js');
   const supabase = getSupabase();
   await supabase.from('kv_store').upsert(
     { key: ACTIVE_SOURCES_KEY, value: { sources: valid }, updated_at: new Date().toISOString() },
@@ -106,9 +136,14 @@ export async function setActiveSources(names) {
   return valid;
 }
 
-// Env/default resolved provider fns (sync) — used by tests.
+// Env/default resolved provider fns (sync, available-only) — used by tests.
 export function activeProviders(env = process.env, registry = PROVIDER_REGISTRY) {
-  return resolveProviders(activeSourceNames(env), registry).map((p) => p.fn);
+  return resolveProviders(activeSourceNames(env), registry)
+    .filter((p) => {
+      const desc = PROVIDERS.find((x) => x.id === p.name);
+      return desc && isAvailable(desc, env);
+    })
+    .map((p) => p.fn);
 }
 
 // getVerifiedPrice(symbol, opts): app-facing entry point. Uses the admin-selected
@@ -124,6 +159,60 @@ export async function getVerifiedPrice(symbol, opts = {}) {
 
 // --- providers -------------------------------------------------------------
 
+// MeroLagani: fetch the server-rendered company page and parse the last price +
+// day change. Best-effort — any failure (network, layout change, no match) returns
+// null so the verified layer fails closed. NOTE (ToS): commercial scraping is part
+// of the P3-1 legal review; this is the interim source before a licensed feed.
+async function fetchMerolagani(symbol) {
+  const s = String(symbol || '').toUpperCase();
+  if (!s) return null;
+  try {
+    const res = await fetch(`https://merolagani.com/CompanyDetail.aspx?symbol=${encodeURIComponent(s)}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    const priceM = html.match(/lblMarketPrice"[^>]*>\s*([\d,]+\.\d+)/i);
+    if (!priceM) return null;
+    const price = Number(priceM[1].replace(/,/g, ''));
+    if (!Number.isFinite(price) || price <= 0) return null;
+
+    // Day change % + direction (text-increase / text-decrease), to derive prevClose
+    // for the plausibility guard.
+    let changePct = null;
+    let prevClose = null;
+    const chM = html.match(/lblChange"[^>]*class="([^"]*)"[^>]*>\s*([\d,]+\.?\d*)/i);
+    if (chM) {
+      const dir = /decrease/i.test(chM[1]) ? -1 : 1;
+      const pct = Number(chM[2].replace(/,/g, ''));
+      if (Number.isFinite(pct)) {
+        changePct = dir * pct;
+        if (changePct !== -100) prevClose = price / (1 + changePct / 100);
+      }
+    }
+    return { symbol: s, price, prevClose, changePct, asOf: Date.now(), source: 'merolagani' };
+  } catch {
+    return null;
+  }
+}
+
+// ShareSansar: price loads via a CSRF-token AJAX flow — not yet implemented, so this
+// fails closed. Build-ready slot for a second cross-check source.
+async function fetchSharesansar() {
+  return null; // TODO(P1-1): implement the sharesansar AJAX price flow.
+}
+
+// NEPSE Official: build-ready, gated on NEPALSTOCK_API_TOKEN. Not selectable until
+// the token env is set (see requiresEnv); the endpoint call lands once the API is
+// available.
+async function fetchNepalstock() {
+  const token = process.env.NEPALSTOCK_API_TOKEN;
+  if (!token) return null;
+  return null; // TODO(P1-1): call the official API with the token → normalized quote.
+}
+
 // Deterministic placeholder: a stable pseudo-price per symbol so the pipeline runs
 // offline. Clearly labeled 'sample' so any surface can flag it as non-real.
 async function fetchSample(symbol) {
@@ -131,19 +220,7 @@ async function fetchSample(symbol) {
   if (!s) return null;
   let h = 0;
   for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  const price = 100 + (h % 900); // stable pseudo price in [100, 999]
-  const prevClose = Math.round(price * (1 + (((h >> 8) % 7) - 3) / 100)); // within ±3%
+  const price = 100 + (h % 900);
+  const prevClose = Math.round(price * (1 + (((h >> 8) % 7) - 3) / 100));
   return { symbol: s, price, prevClose, asOf: Date.now(), source: 'sample' };
-}
-
-// Real-source stubs — implement once the endpoint/DOM is validated and ToS cleared
-// (P1-1). Returning null keeps the system failing closed until then.
-async function fetchMerolagani() {
-  return null; // TODO(P1-1): parse merolagani.com → { symbol, price, prevClose, asOf, source: 'merolagani' }
-}
-async function fetchSharesansar() {
-  return null; // TODO(P1-1): parse sharesansar.com → { ..., source: 'sharesansar' }
-}
-async function fetchNepalstock() {
-  return null; // TODO(P1-1): parse nepalstock.com.np → { ..., source: 'nepalstock' }
 }

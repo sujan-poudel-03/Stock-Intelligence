@@ -2,16 +2,10 @@
 
 import { useEffect, useState } from 'react';
 
-// Settings → Data Sources. Admin picks which market-data provider(s) feed the
-// verified-price layer. Selection is validated + persisted server-side
-// (/api/admin/sources → kv_store). Non-live sources are flagged so a sample/stub
-// selection can never be mistaken for real market data.
-
-const STATUS = {
-  live: { label: 'LIVE', color: '#10b981' },
-  sample: { label: 'SAMPLE', color: '#f59e0b' },
-  stub: { label: 'NOT CONNECTED', color: '#4a5568' },
-};
+// Settings → Data Sources (admin). Pick which market-data provider(s) feed the
+// verified-price layer. A source that isn't available — not implemented (stub) or
+// missing its required env (e.g. an API token) — renders DISABLED and can't be
+// selected; the server rejects it too. Selection persists to kv_store.
 
 export default function AdminDataSources() {
   const [providers, setProviders] = useState([]);
@@ -36,9 +30,10 @@ export default function AdminDataSources() {
     };
   }, []);
 
-  function toggle(id) {
+  function toggle(p) {
+    if (!p.available) return; // disabled sources can't be selected
     setMsg(null);
-    setActive((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    setActive((cur) => (cur.includes(p.id) ? cur.filter((x) => x !== p.id) : [...cur, p.id]));
   }
 
   async function save() {
@@ -69,13 +64,27 @@ export default function AdminDataSources() {
     return p && p.status !== 'live';
   });
 
+  function badge(p) {
+    if (!p.available) return { label: 'DISABLED', color: '#4a5568' };
+    if (p.status === 'live') return { label: 'LIVE', color: '#10b981' };
+    if (p.status === 'sample') return { label: 'SAMPLE', color: '#f59e0b' };
+    return { label: p.status.toUpperCase(), color: '#4a5568' };
+  }
+
+  function disabledReason(p) {
+    if (p.available) return null;
+    if (p.status === 'stub') return 'Not implemented yet';
+    if (p.requiresEnv && p.requiresEnv.length) return `Requires ${p.requiresEnv.join(', ')} — set it to enable`;
+    return 'Unavailable';
+  }
+
   return (
     <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <div style={{ width: 28, height: 28, borderRadius: 8, background: '#8b5cf618', border: '1px solid #8b5cf633', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#8b5cf6', fontFamily: 'IBM Plex Mono,monospace', fontWeight: 600 }}>db</div>
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Market Data Sources</div>
-          <div style={{ fontSize: 10, color: '#4a5568' }}>Where verified prices come from. Multiple sources are cross-checked.</div>
+          <div style={{ fontSize: 10, color: '#4a5568' }}>Where verified prices come from. Admin-only. Multiple sources are cross-checked.</div>
         </div>
       </div>
 
@@ -85,12 +94,15 @@ export default function AdminDataSources() {
         <>
           {providers.map((p) => {
             const on = active.includes(p.id);
-            const st = STATUS[p.status] || STATUS.stub;
+            const b = badge(p);
+            const reason = disabledReason(p);
+            const dim = !p.available;
             return (
               <button
                 key={p.id}
-                onClick={() => toggle(p.id)}
-                style={{ width: '100%', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 0', borderBottom: '1px solid #0f1420', background: 'transparent', border: 'none', borderBottomStyle: 'solid', cursor: 'pointer', textAlign: 'left' }}
+                onClick={() => toggle(p)}
+                disabled={dim}
+                style={{ width: '100%', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 0', borderBottom: '1px solid #0f1420', background: 'transparent', border: 'none', borderBottomStyle: 'solid', cursor: dim ? 'not-allowed' : 'pointer', textAlign: 'left', opacity: dim ? 0.5 : 1 }}
               >
                 <div style={{ width: 16, height: 16, marginTop: 1, borderRadius: 4, border: '1px solid ' + (on ? '#8b5cf6' : '#2a3550'), background: on ? '#8b5cf6' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {on && <span style={{ fontSize: 10, color: '#0b0e16', fontWeight: 700 }}>✓</span>}
@@ -98,9 +110,10 @@ export default function AdminDataSources() {
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 12, fontWeight: on ? 600 : 400, color: on ? '#e2e8f0' : '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{p.label}</span>
-                    <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '.04em', color: st.color, background: st.color + '20', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{st.label}</span>
+                    <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '.04em', color: b.color, background: b.color + '20', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{b.label}</span>
                   </div>
                   <div style={{ fontSize: 10, color: '#4a5568', marginTop: 3 }}>{p.description}</div>
+                  {reason && <div style={{ fontSize: 9, color: '#f59e0b', marginTop: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{reason}</div>}
                 </div>
               </button>
             );

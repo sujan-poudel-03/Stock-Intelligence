@@ -186,6 +186,27 @@ async function checkTables(timeoutMs) {
   return { reachable, present, missingTables, aborted: false };
 }
 
+// Probe whether a column exists by asking PostgREST to select it. 200 -> present;
+// a 400 (undefined column / schema cache) -> absent; network error -> unknown.
+async function checkColumn(table, column, timeoutMs) {
+  const url = env('SUPABASE_URL');
+  const key = env('SUPABASE_ANON_KEY');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${url}/rest/v1/${table}?select=${column}&limit=1`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: controller.signal,
+    });
+    if (res.ok) return { exists: true };
+    return { exists: false };
+  } catch {
+    return { exists: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 (async () => {
   let fatal = false;
 
@@ -205,6 +226,17 @@ async function checkTables(timeoutMs) {
         if (isStartup) fatal = true; // missing schema is a hard dependency failure
       } else if (result.present.length === EXPECTED_TABLES.length) {
         ok('All expected tables exist.');
+      }
+
+      // Doctor-only: report whether the optional time-decay migration is applied.
+      if (!isStartup && result.present.includes('weights')) {
+        const dec = await checkColumn('weights', 'dwins', isStartup ? 3000 : 8000);
+        if (dec.exists === true) {
+          ok('Time-decay migration applied (weights.dwins present).');
+        } else if (dec.exists === false) {
+          warn('Time-decay migration not applied (optional).');
+          info('Apply supabase/migrations/20260724120000_weights_decay.sql in the SQL Editor — calibration works without it; decay activates once applied.');
+        }
       }
     }
   }

@@ -5,7 +5,9 @@ Autonomous NEPSE swing-trading **signal** agent. Next.js 14 (App Router, plain J
 generates BUY/SELL/HOLD/AVOID signals, tracks WIN/LOSS outcomes, and learns from
 them. It does **not** place trades — it produces analysis, a daily brief, and alerts.
 
-See `README.md` for setup and the full scan-chain diagram.
+See `README.md` for setup and the full scan-chain diagram, and
+**`docs/DEPLOYMENT.md`** for deployment (Vercel/Supabase/local env placement), how to
+make an admin, Google Sign-In setup, and the owner-action checklist.
 
 ## Standing rules (always on)
 
@@ -57,11 +59,14 @@ are cleared. Full rationale + the phased plan is in **Production roadmap** below
   the gate, freshness is not** — a late-but-true quote (minutes/hours old) is
   accepted and flagged `stale`; only wrong/disagreeing/implausible data is rejected.
   Use the LLM only to *reason over* verified numbers — never to source them.
-  `scanOneStock` and outcome resolution are already wired onto `getVerifiedPrice`
-  (the LLM is barred from setting a price). The shipped default source is `sample`
-  (labeled placeholder data); the real-source fetchers (merolagani/sharesansar/
-  nepalstock) are stubs pending P1-1 + a ToS review. **Do not present the product to
-  real users until a live source is wired and the `sample` source is off.**
+  `scanOneStock` and outcome resolution are wired onto `getVerifiedPrice` (the LLM is
+  barred from setting a price). **`merolagani` is LIVE** (real scraped quotes; the
+  deployment default). `sample` is the offline placeholder (labeled, flagged by the
+  disclaimer). `sharesansar` is a not-yet-implemented stub; `nepalstock` is
+  build-ready but **config-gated** on `NEPALSTOCK_API_TOKEN` (disabled/unselectable
+  until set). Sources declare `requiresEnv`; unavailable ones are rejected by
+  `setActiveSources`, so the admin can't switch to a disabled source. **ToS caveat:**
+  commercial scraping of merolagani is still pending the P3-1 legal review.
 
 - **Every user-facing signal/brief carries "educational, not financial advice"
   framing.** Publishing BUY/SELL to users implicates SEBON (Securities Board of
@@ -72,8 +77,35 @@ are cleared. Full rationale + the phased plan is in **Production roadmap** below
 
 - **Single-tenant assumptions stop at user #2.** The anon-key / no-RLS / shared-state
   design is a single-user decision. Do not onboard more than one real user until
-  Auth + per-user rows + RLS-on + per-user budget accounting land (Roadmap Phase 2).
-  Any feature storing user-specific state must not bake in the shared-singleton model.
+  Auth + per-user rows + RLS-on land (Roadmap Phase 2). Any feature storing
+  *user-specific* state must not bake in the shared-singleton model.
+
+- **Market data is GLOBAL, never per-tenant.** Prices, `scans`/`scan_jobs`,
+  `signals`, `outcomes`, calibration (`weights`), and `knowledge` are the SAME for
+  every user — fetch/compute them **once per cycle and share**. NEVER fetch market
+  data or run a scan per user: the scan universe is the *union* of all watchlists +
+  discovery, so a symbol is scanned once no matter how many users watch it, and
+  cost scales with **distinct symbols, not user count**. Multi-tenancy adds only a
+  thin per-user layer (watchlist, alert prefs, subscription, saved portfolio); a
+  user's brief/watchlist view is a **filter over the shared signals**, not a
+  re-fetch. RLS follows suit: shared tables are readable by any authenticated user
+  and written only by the cron/service role; per-user tables are owner-only.
+
+- **Auth is identity-only, and there are two roles.** Signing in must NEVER trigger
+  a data fetch or scan — the scan runs on the global cron independent of who is
+  logged in; a login just reads already-computed shared data + the user's own view.
+  Roles: **admin** (system config — data sources, scan control, the internal
+  shadow-B scoreboard, budget/schedule) and **user** (view signals/brief + manage
+  own watchlist/alerts). System-config actions are **admin-only and server-enforced**
+  — the Market Data Sources selector and `/api/admin/*` must REJECT non-admins, not
+  merely hide the UI. Auth is **Google Sign-In only**. Admin identity starts as a
+  Google-email allowlist (`ADMIN_EMAILS`); a `role` column can come later.
+  **Admin gate is BUILT** (`src/lib/auth.js` `requireAdmin`): `POST /api/admin/*`
+  config mutations are server-enforced against `ADMIN_EMAILS` (a Google-email
+  allowlist) via the caller's Supabase session token. **Phased:** `ADMIN_EMAILS`
+  blank → gate is OPEN (single-operator interim); set it → ENFORCES, no code change.
+  The Google client login wiring + full setup are in `docs/DEPLOYMENT.md` (needs the
+  owner's Google Cloud + Supabase provider setup). Per-user rows + RLS-on stay later.
 
 - **B (signal service) runs shadow-only until it earns graduation.** The eventual
   goal is a specific, actionable "do this" decision — but B's directional calls are
@@ -147,8 +179,10 @@ is existential, while A→B remains an open door later (licensed) but B→A does
   `/api/admin/sources`; shipped `sample` default so it runs offline.
 - [x] `scanOneStock` + outcome resolution rewired onto `getVerifiedPrice` (LLM can
   no longer set a price).
-- [ ] **P1-1**: implement a real source fetcher (owner picks source; ToS review) —
-  the one remaining gate before real users.
+- [x] **P1-1**: `merolagani` live fetcher (real NEPSE quotes), validated end-to-end.
+  Config-gated provider system: sources declare `requiresEnv` and stay disabled/
+  unselectable until set (nepalstock ← `NEPALSTOCK_API_TOKEN`). ToS review (P3-1)
+  still pending before commercial use. (sharesansar: not yet implemented.)
 
 **Phase 1.5 — Learning & validation (robust, explainable "RL").** — harness DONE.
 - [x] **Backtest / replay harness** `src/lib/backtest.js` — the validation
@@ -172,21 +206,39 @@ is existential, while A→B remains an open door later (licensed) but B→A does
   breaks explainability). *Open follow-ups:* apply the migration; wire Thompson
   selection into discovery; feed the shadow scoreboard from a live internal report.
 
-**Phase 2 — Multi-tenant SaaS foundation.**
-- Supabase Auth + per-user rows + **RLS on** (reverses the single-tenant default).
-- Per-user watchlists, brief, alert prefs, and LLM-budget accounting.
+**Phase 2 — Multi-tenant SaaS foundation.** (Preserve the shared/per-user split —
+see the "Market data is GLOBAL" guardrail. Market data/scans/signals/weights/
+knowledge stay global; only a thin per-user layer is added.)
+- Auth = **Google Sign-In only** (Supabase Google provider). Roles: **admin**
+  (Google-email allowlist `ADMIN_EMAILS`) vs **user**. **Start OPEN** — gate only
+  `/api/admin/*` (data-source config, scan control) behind the admin check now;
+  require sign-in for per-user features + turn RLS on in a later step.
+- Supabase Auth + **RLS on** (later step). Shared tables: readable by any
+  authenticated user, writable only by the cron/service role. Per-user tables:
+  owner-only. Login is identity-only — it never triggers a fetch/scan.
+- Add `user_id` **only** to new per-user tables (watchlist, alert prefs,
+  subscription, saved portfolio) — NOT to signals/scans/weights/knowledge.
+- One scan serves everyone: the scan universe = union of all watchlists + discovery.
+  A user's brief/watchlist is a filter/view over the shared signals, not a re-fetch.
 - Billing (Stripe, or a Nepal-friendly gateway — eSewa/Khalti) with free/paid tiers.
-- Meter per-user LLM cost against the subscription price — the shared daily budget
-  cap does not scale to many users.
+- The shared scan is a fixed global LLM cost amortized across all subscribers; meter
+  per-user cost ONLY for optional per-user LLM features (chat, custom summaries).
 
 **Phase 3 — Trust, compliance, delivery.**
-- Disclaimers + ToS + privacy policy on every surface; "past performance ≠ future
-  results" on the track record.
-- Transparent track-record page (real WIN/LOSS history) — the top marketing asset
-  *and* the honesty mechanism.
-- Delivery channels Nepali retail actually uses: email (have it) + Viber / Telegram
-  / WhatsApp daily brief.
-- Observability + on-call for the scan chain (surface the `events` it already emits).
+- [x] Disclaimer component (`src/components/Disclaimer.jsx`) on every surface —
+  "educational, not financial advice · past performance ≠ future results", and
+  loudly flags when a non-live (`sample`) source is active. Final legal copy + ToS +
+  privacy policy still pending the SEBON/legal review (P3-1).
+- [x] Transparent track-record page — `Track Record` tab + `/api/track-record`,
+  computed from the `signals` table (ground truth), losses included. Overall +
+  by-direction + by-sector win rates carry the Wilson lower bound (`conservative`),
+  recent outcomes list. The top marketing asset *and* the honesty mechanism.
+- [x] Delivery + observability via config-gated channels (`src/lib/notify.js`):
+  email (Resend) + Telegram, each ACTIVE only when its env is set (same pattern as
+  data sources). The brief route delivers the daily digest AND alerts on
+  partial/failed scans, best-effort in the background. Admin sees channel status in
+  Settings → Notifications (`/api/admin/channels`). Events already surface in the
+  Activity panel. (Viber/WhatsApp can be added as further channels later.)
 
 **Phase 4 — Go-to-market.**
 - Positioning: "An AI analyst for NEPSE that shows its work and its track record" —

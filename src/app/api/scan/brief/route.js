@@ -4,6 +4,7 @@ import { runBrief } from '@/lib/scan';
 import { checkOutcomes } from '@/lib/outcomes';
 import { runBackground } from '@/lib/background';
 import { logEvent } from '@/lib/events';
+import { notify, formatScanDigest } from '@/lib/notify';
 import { withGuard } from '@/lib/respond';
 import { KV, SIGNAL_HISTORY_SCANS, WATCH_PROMOTE_MIN } from '@/lib/constants';
 
@@ -103,8 +104,28 @@ export const POST = withGuard(async (request) => {
     },
   });
 
-  // 6. Trigger outcome monitoring (updates weights + sends alerts) in background.
+  // 6. Deliver the brief + health alert, then run outcome monitoring — both in the
+  // background so they don't delay the response or risk the 60s budget. Notify only
+  // when there's something worth pinging about: a partial/failed scan (observability
+  // alert) or actionable signals (the daily-brief delivery). Best-effort; a channel
+  // with no env configured is simply skipped.
   await runBackground(async () => {
+    try {
+      if (status === 'partial' || actionable.length > 0) {
+        await notify(
+          formatScanDigest({
+            status,
+            brief,
+            signals: doneSignals.length,
+            actionable: actionable.length,
+            failed: failures.length,
+            skipped: skipped.length,
+          })
+        );
+      }
+    } catch (err) {
+      console.error('notify failed:', err?.message || err);
+    }
     try {
       await checkOutcomes();
     } catch (err) {

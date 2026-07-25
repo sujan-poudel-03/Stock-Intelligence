@@ -12,6 +12,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "deploy": "node scripts/deploy.mjs",
     "doctor": "node scripts/preflight.mjs --mode=doctor"
   },
   "dependencies": {
