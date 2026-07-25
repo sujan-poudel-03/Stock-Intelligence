@@ -104,8 +104,12 @@ are cleared. Full rationale + the phased plan is in **Production roadmap** below
   config mutations are server-enforced against `ADMIN_EMAILS` (a Google-email
   allowlist) via the caller's Supabase session token. **Phased:** `ADMIN_EMAILS`
   blank → gate is OPEN (single-operator interim); set it → ENFORCES, no code change.
-  The Google client login wiring + full setup are in `docs/DEPLOYMENT.md` (needs the
-  owner's Google Cloud + Supabase provider setup). Per-user rows + RLS-on stay later.
+  Google client sign-in is BUILT (`src/lib/authClient.js` / `useAuth` / `AuthPanel`):
+  the screen shows the admin config surfaces (data sources, notifications) ONLY to
+  admins (via `/api/admin/me`) and attaches the session token to admin mutations;
+  with the `NEXT_PUBLIC_SUPABASE_*` env unset it degrades to open mode (single
+  operator sees everything). Setup steps (`docs/DEPLOYMENT.md` §5) still need the
+  owner's Google Cloud + Supabase provider config. Per-user rows + RLS-on stay later.
 
 - **B (signal service) runs shadow-only until it earns graduation.** The eventual
   goal is a specific, actionable "do this" decision — but B's directional calls are

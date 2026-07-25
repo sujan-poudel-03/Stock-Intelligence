@@ -108,8 +108,12 @@ ID + secret. Add your site URL + `https://<app-domain>/` to Auth → URL Configu
 **c. Vercel env** — set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 (same values as the server ones, just exposed to the browser), and `ADMIN_EMAILS`.
 
-**d. Client wiring** — a browser Supabase client does the login and the admin fetches
-send its token. Minimal pattern:
+**d. Client wiring — already built.** `src/lib/authClient.js` + `useAuth` + the
+`AuthPanel` in Settings handle Google sign-in, and the admin UI (`AdminDataSources`)
+already attaches the session token to its mutations. Once steps a–c are done and
+`ADMIN_EMAILS` is set, sign-in appears in Settings, admin config surfaces show only
+to admins, and non-admins see a clean read-only app. Nothing more to code — the
+reference pattern below is what's shipped:
 
 ```js
 // src/lib/authClient.js  (browser)

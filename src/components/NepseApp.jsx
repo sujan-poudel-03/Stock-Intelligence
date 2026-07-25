@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { dbGet, dbSet } from '@/lib/clientStorage';
 import AdminDataSources from '@/components/AdminDataSources';
 import AdminChannels from '@/components/AdminChannels';
+import AuthPanel from '@/components/AuthPanel';
 import Disclaimer from '@/components/Disclaimer';
+import { useAuth } from '@/lib/useAuth';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -163,6 +165,7 @@ function fmtRet(pct) { const n = Number(pct); return (n >= 0 ? '+' : '') + (Math
 export default function NepseApp() {
   const [tab, setTab] = useState('today');
   const [exchange, setExchange] = useState('NEPSE');
+  const auth = useAuth(); // client view of admin state (server enforces the boundary)
 
   // Server-backed data
   const [status, setStatus] = useState(null);
@@ -1093,11 +1096,20 @@ export default function NepseApp() {
                 </div>
               </div>
 
-              {/* Data Sources */}
-              <AdminDataSources />
+              {/* Account / admin sign-in (only when Google auth is configured) */}
+              <AuthPanel auth={auth} />
 
-              {/* Notifications */}
-              <AdminChannels />
+              {/* Admin-only config surfaces — hidden for non-admins; the server
+                  still enforces the boundary on the actual mutations. */}
+              {auth.isAdmin && (
+                <>
+                  {/* Data Sources */}
+                  <AdminDataSources />
+
+                  {/* Notifications */}
+                  <AdminChannels />
+                </>
+              )}
 
               {/* Discovery */}
               <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getAccessToken } from '@/lib/authClient';
 
 // Settings → Data Sources (admin). Pick which market-data provider(s) feed the
 // verified-price layer. A source that isn't available — not implemented (stub) or
@@ -40,9 +41,10 @@ export default function AdminDataSources() {
     setSaving(true);
     setMsg(null);
     try {
+      const token = await getAccessToken();
       const r = await fetch('/api/admin/sources', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ active }),
       });
       const d = await r.json();

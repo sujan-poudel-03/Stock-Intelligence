@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { adminEmails, isAdminEmail, adminGateEnabled } from '../src/lib/auth.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { adminEmails, isAdminEmail, adminGateEnabled, resolveAdmin } from '../src/lib/auth.js';
+
+const fakeReq = (auth) => ({ headers: { get: (k) => (String(k).toLowerCase() === 'authorization' ? auth || null : null) } });
 
 describe('admin allowlist', () => {
   it('parses a comma-separated, case/space-insensitive allowlist', () => {
@@ -21,5 +23,23 @@ describe('admin allowlist', () => {
 
   it('gate ENFORCES once an allowlist is set', () => {
     expect(adminGateEnabled({ ADMIN_EMAILS: 'owner@example.com' })).toBe(true);
+  });
+});
+
+describe('resolveAdmin (client role check)', () => {
+  const saved = process.env.ADMIN_EMAILS;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ADMIN_EMAILS;
+    else process.env.ADMIN_EMAILS = saved;
+  });
+
+  it('open mode: everyone reads as admin when no allowlist is set', async () => {
+    delete process.env.ADMIN_EMAILS;
+    expect(await resolveAdmin(fakeReq())).toEqual({ gateEnabled: false, isAdmin: true, email: null });
+  });
+
+  it('enforced + no token: not admin', async () => {
+    process.env.ADMIN_EMAILS = 'owner@nepa.com';
+    expect(await resolveAdmin(fakeReq())).toEqual({ gateEnabled: true, isAdmin: false, email: null });
   });
 });

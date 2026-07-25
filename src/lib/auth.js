@@ -35,6 +35,26 @@ function bearerToken(request) {
   return m ? m[1].trim() : null;
 }
 
+// resolveAdmin(request) -> { gateEnabled, isAdmin, email } — NON-gating. Lets the
+// client ask "am I an admin?" so the UI can show/hide admin controls. The UI is a
+// convenience only; the real boundary is requireAdmin on the mutation routes.
+export async function resolveAdmin(request) {
+  if (!adminGateEnabled()) return { gateEnabled: false, isAdmin: true, email: null };
+
+  const token = bearerToken(request);
+  if (!token) return { gateEnabled: true, isAdmin: false, email: null };
+
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.auth.getUser(token);
+    const email = data?.user?.email || null;
+    if (error || !email) return { gateEnabled: true, isAdmin: false, email: null };
+    return { gateEnabled: true, isAdmin: isAdminEmail(email), email };
+  } catch {
+    return { gateEnabled: true, isAdmin: false, email: null };
+  }
+}
+
 // requireAdmin(request) -> { ok: true, email, open? } | { ok: false, status, error }
 // Call at the top of every admin/system-config route handler.
 export async function requireAdmin(request) {
