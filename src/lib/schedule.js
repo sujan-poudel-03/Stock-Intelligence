@@ -1,8 +1,9 @@
-// Scan schedule helpers. The actual triggers are Vercel crons in vercel.json;
-// this mirrors them so the UI can show the next/last run time.
+// Scan schedule helpers. The actual triggers are the GitHub Actions cron in
+// .github/workflows/scan-schedule.yml (Vercel Hobby can't run sub-daily crons, so
+// vercel.json carries NO crons); this mirrors those times so the UI can show the
+// next/last run time.
 //
-// KEEP IN SYNC with vercel.json `crons[].schedule` (same convention as
-// EXPECTED_TABLES <-> scripts/preflight.mjs). Vercel crons run in UTC.
+// KEEP IN SYNC with .github/workflows/scan-schedule.yml cron times (UTC).
 //
 // NEPSE trades Sun–Thu, 11:00–15:00 NPT (UTC+5:45). Tiered cadence, in UTC:
 //   45 3 * * 0-4        -> 09:30 NPT  full pre-open scan
