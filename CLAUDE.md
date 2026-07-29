@@ -110,6 +110,10 @@ are cleared. Full rationale + the phased plan is in **Production roadmap** below
   with the `NEXT_PUBLIC_SUPABASE_*` env unset it degrades to open mode (single
   operator sees everything). Setup steps (`docs/DEPLOYMENT.md` §5) still need the
   owner's Google Cloud + Supabase provider config. Per-user rows + RLS-on stay later.
+  An optional **hard login wall** (`LoginWall`, gated by `NEXT_PUBLIC_REQUIRE_LOGIN=
+  true`) requires sign-in before the whole app renders; kept OFF by default and
+  separate from the admin gate so the public track record stays viewable — turning
+  it on hides that marketing surface, a deliberate trade-off.
 
 - **B (signal service) runs shadow-only until it earns graduation.** The eventual
   goal is a specific, actionable "do this" decision — but B's directional calls are

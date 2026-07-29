@@ -5,6 +5,7 @@ import { dbGet, dbSet } from '@/lib/clientStorage';
 import AdminDataSources from '@/components/AdminDataSources';
 import AdminChannels from '@/components/AdminChannels';
 import AuthPanel from '@/components/AuthPanel';
+import LoginWall from '@/components/LoginWall';
 import Disclaimer from '@/components/Disclaimer';
 import { useAuth } from '@/lib/useAuth';
 
@@ -516,6 +517,14 @@ export default function NepseApp() {
   ];
 
   var progressLabel = running ? (status.completed || 0) + '/' + (status.total || 0) + (scanSym ? ' ' + scanSym : '') : null;
+
+  // Hard login wall (Option B): require sign-in before the app renders — ONLY when
+  // both Google auth is configured AND NEXT_PUBLIC_REQUIRE_LOGIN=true. Dormant
+  // otherwise, so the app stays open and nobody gets locked out before Google is
+  // wired (or if you keep viewing open for the public track record).
+  if (auth.configured && auth.requireLogin && !auth.loading && !auth.signedIn) {
+    return <LoginWall onSignIn={auth.signIn} />;
+  }
 
   // ---------------------------------------------------------------------------
   return (

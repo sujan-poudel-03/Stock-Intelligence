@@ -10,6 +10,11 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 export const authConfigured = !!(url && key);
 
+// Hard login wall (Option B): when true, the WHOLE app requires sign-in. Kept
+// separate from authConfigured so Google can gate only the admin surfaces (open
+// viewing + public track record) UNLESS you explicitly want the full wall.
+export const requireLogin = process.env.NEXT_PUBLIC_REQUIRE_LOGIN === 'true';
+
 let _client = null;
 function client() {
   if (!authConfigured) return null;
