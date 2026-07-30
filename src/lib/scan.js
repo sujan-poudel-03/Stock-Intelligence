@@ -205,8 +205,7 @@ Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a
     webSearch: true,
     webFetch: true,
     maxTokens: 2500,
-    system:
-      'You are a NEPSE research + trading signal agent. The price is given and verified — never change it. Return only valid JSON. Be disciplined and risk-aware.',
+    system: `You are a ${ex.marketLabel} research + trading signal agent. The price is given and verified — never change it. Return only valid JSON. Be disciplined and risk-aware.`,
   });
 
   // Budget spent / LLM unavailable => r is {} and every field below falls back to a
@@ -239,6 +238,7 @@ Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a
 
   return {
     symbol,
+    exchange: ex.id,
     signal: r.signal || 'HOLD',
     confidence: r.confidence || 'LOW',
     price,
@@ -294,6 +294,7 @@ export function deterministicSignal(stockData = {}, exchange = DEFAULT_EXCHANGE)
   const t = calcTargets({}, price, currencySymbolFor(exchange));
   return {
     symbol: stockData.symbol,
+    exchange: getExchange(exchange).id,
     signal,
     confidence: 'LOW',
     price,

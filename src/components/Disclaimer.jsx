@@ -1,14 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getExchange } from '@/lib/exchanges';
 
 // Persistent disclaimer strip shown on every surface (mounted in the app shell).
 // Enforces guardrail #2 (every signal/brief surface carries "educational, not
 // financial advice") AND ties it to data reality: when a non-live source is active,
 // it loudly flags that prices are SAMPLE data, so they can't be mistaken for real.
+// The regulator-specific copy (SEBON vs SEC/FINRA) follows the ACTIVE exchange.
 // Placeholder wording — final legal copy comes from the SEBON/legal review (P3-1).
-export default function Disclaimer() {
+export default function Disclaimer({ exchange }) {
   const [sampleActive, setSampleActive] = useState(false);
+  const disclaimerText = getExchange(exchange).disclaimer.text;
 
   useEffect(() => {
     let alive = true;
@@ -48,8 +51,7 @@ export default function Disclaimer() {
         </span>
       )}
       <span style={{ fontSize: 9, color: sampleActive ? '#a1671a' : '#4a5568', fontFamily: 'Inter,sans-serif' }}>
-        Educational research, not financial advice. Signals are model-generated — verify independently before
-        trading. Past performance ≠ future results.
+        {disclaimerText}
       </span>
     </div>
   );

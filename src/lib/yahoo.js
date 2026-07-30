@@ -53,7 +53,9 @@ export async function fetchYahooStock(symbol) {
 // Pure — returns null when there's no usable price so the layer fails closed.
 export function normalizeYahooQuote(stock, symbol) {
   const price = stock == null ? null : Number(stock.price);
-  if (!Number.isFinite(price)) return null;
+  // Fail closed: no price, NaN, zero, or negative → null (the verified-price core
+  // also rejects non-positive, but reject here so a junk quote never even forms).
+  if (!Number.isFinite(price) || price <= 0) return null;
   const prev = Number(stock.previousClose);
   return {
     symbol: String(stock.symbol || symbol || '').toUpperCase() || null,

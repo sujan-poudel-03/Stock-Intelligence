@@ -72,17 +72,20 @@ async function bump(key, outcome, returnPct) {
 }
 
 /**
- * updateWeights(symbol, sector, signalType, outcome, returnPct)
- * Records one resolved outcome across all relevant calibration keys.
+ * updateWeights(symbol, sector, signalType, outcome, returnPct, exchange)
+ * Records one resolved outcome across all relevant calibration keys. Keys are
+ * namespaced by exchange via scopeKey — NEPSE stays UNPREFIXED (existing rows keep
+ * learning), every other exchange gets an `${EXCHANGE}:` prefix so it learns from
+ * its own outcomes without cross-contaminating NEPSE.
  */
-export async function updateWeights(symbol, sector, signalType, outcome, returnPct) {
-  const keys = ['ALL'];
-  if (signalType) keys.push(signalType.toUpperCase());
-  if (signalType && sector) keys.push(`${signalType.toUpperCase()}_${slug(sector)}`);
-  if (symbol) keys.push(`SYMBOL_${symbol.toUpperCase()}`);
+export async function updateWeights(symbol, sector, signalType, outcome, returnPct, exchange = DEFAULT_EXCHANGE) {
+  const raw = ['ALL'];
+  if (signalType) raw.push(signalType.toUpperCase());
+  if (signalType && sector) raw.push(`${signalType.toUpperCase()}_${slug(sector)}`);
+  if (symbol) raw.push(`SYMBOL_${symbol.toUpperCase()}`);
 
-  for (const key of keys) {
-    await bump(key, outcome, returnPct);
+  for (const key of raw) {
+    await bump(scopeKey(exchange, key), outcome, returnPct);
   }
 }
 
@@ -92,15 +95,15 @@ export async function updateWeights(symbol, sector, signalType, outcome, returnP
  *   "Agent win rate: 72% from 18 trades. BUY_banks: 78% from 9. NABIL: 80% from 5."
  * Returns '' when there is no track record yet.
  */
-export async function getWeightContext(symbol, sector) {
+export async function getWeightContext(symbol, sector, exchange = DEFAULT_EXCHANGE) {
   const supabase = getSupabase();
 
-  const wantedKeys = ['ALL'];
+  const wantedRaw = ['ALL'];
   if (sector) {
-    wantedKeys.push(`BUY_${slug(sector)}`);
-    wantedKeys.push(`SELL_${slug(sector)}`);
+    wantedRaw.push(`BUY_${slug(sector)}`, `SELL_${slug(sector)}`);
   }
-  if (symbol) wantedKeys.push(`SYMBOL_${symbol.toUpperCase()}`);
+  if (symbol) wantedRaw.push(`SYMBOL_${symbol.toUpperCase()}`);
+  const wantedKeys = wantedRaw.map((k) => scopeKey(exchange, k));
 
   const { data } = await supabase
     .from('weights')
@@ -112,14 +115,14 @@ export async function getWeightContext(symbol, sector) {
   const byKey = Object.fromEntries(data.map((w) => [w.key, w]));
   const parts = [];
 
-  const all = byKey['ALL'];
+  const all = byKey[scopeKey(exchange, 'ALL')];
   if (all && all.wins + all.losses > 0) {
     parts.push(`Agent win rate: ${slice(all)} (avg return ${num(all.avg_return)}%)`);
   }
 
   if (sector) {
     for (const sig of ['BUY', 'SELL']) {
-      const w = byKey[`${sig}_${slug(sector)}`];
+      const w = byKey[scopeKey(exchange, `${sig}_${slug(sector)}`)];
       if (w && w.wins + w.losses > 0) {
         parts.push(`${sig}_${slug(sector)}: ${slice(w)}`);
       }
@@ -127,7 +130,7 @@ export async function getWeightContext(symbol, sector) {
   }
 
   if (symbol) {
-    const w = byKey[`SYMBOL_${symbol.toUpperCase()}`];
+    const w = byKey[scopeKey(exchange, `SYMBOL_${symbol.toUpperCase()}`)];
     if (w && w.wins + w.losses > 0) {
       parts.push(`${symbol.toUpperCase()}: ${slice(w)}`);
     }
@@ -146,7 +149,7 @@ export async function getWeightContext(symbol, sector) {
  *    signal+sector — BUY_banks: 78% (9 trades, avg +3.1%); SELL_hydropower: 60% (5 trades, avg +0.8%)."
  * Returns '' when there is no track record yet.
  */
-export async function getOverviewContext() {
+export async function getOverviewContext(exchange = DEFAULT_EXCHANGE) {
   const supabase = getSupabase();
   const { data } = await supabase.from('weights').select('*');
   if (!data || data.length === 0) return '';
@@ -154,18 +157,21 @@ export async function getOverviewContext() {
   const byKey = Object.fromEntries(data.map((w) => [w.key, w]));
   const parts = [];
 
-  const all = byKey['ALL'];
+  const all = byKey[scopeKey(exchange, 'ALL')];
   if (all && all.wins + all.losses > 0) {
     parts.push(`Overall agent win rate: ${slice(all)} (avg return ${num(all.avg_return)}%).`);
     const rw = recentRate(all);
     if (rw != null) parts.push(`Recent-weighted win rate (favours the current regime): ${pct(rw)}.`);
   }
 
-  // Leaderboard across BUY_*/SELL_* slices with enough trades to be meaningful,
-  // ranked by the Wilson LOWER BOUND (not raw rate) so a thin "100% from 2" cannot
-  // top a proven "75% from 30". Cap at the top 6 so the prompt stays tight.
+  // Leaderboard across THIS exchange's BUY_*/SELL_* slices with enough trades to be
+  // meaningful, ranked by the Wilson LOWER BOUND (not raw rate) so a thin "100% from
+  // 2" cannot top a proven "75% from 30". Cap at the top 6 so the prompt stays tight.
+  // The exchange prefix (`NYSE:` / '' for NEPSE) keeps each exchange's board separate.
+  const prefix = scopeKey(exchange, '');
+  const sliceRe = new RegExp(`^${prefix}(BUY|SELL)_`);
   const slices = data
-    .filter((w) => /^(BUY|SELL)_/.test(w.key) && w.wins + w.losses >= 2)
+    .filter((w) => sliceRe.test(w.key) && w.wins + w.losses >= 2)
     .map((w) => ({ w, lb: wilsonLowerBound(w.wins, w.wins + w.losses) }))
     .sort((a, b) => b.lb - a.lb || b.w.wins + b.w.losses - (a.w.wins + a.w.losses))
     .slice(0, 6)

@@ -8,6 +8,7 @@ import AuthPanel from '@/components/AuthPanel';
 import LoginWall from '@/components/LoginWall';
 import Disclaimer from '@/components/Disclaimer';
 import { useAuth } from '@/lib/useAuth';
+import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -92,10 +93,8 @@ var DEFAULT_SETTINGS = {
   autoremove_after: 3,
   sector_focus: { banks: true, hydro: true, microfinance: true, insurance: true, devbanks: true, finance: true },
 };
-var EXCHANGES = {
-  NEPSE: { id: 'NEPSE', name: 'Nepal Stock Exchange', currency: 'NPR', symbol: 'Rs', timezone: 'Asia/Kathmandu', hours: '11:00-15:00', source: 'merolagani.com', flag: 'NP' },
-  NYSE: { id: 'NYSE', name: 'New York Stock Exchange', currency: 'USD', symbol: '$', timezone: 'America/New_York', hours: '09:30-16:00', source: 'finance.yahoo.com', flag: 'US' },
-};
+// EXCHANGES is the shared registry (src/lib/exchanges.js) — the single source of
+// truth for the exchange dimension across client + server. Do not fork it here.
 var SECTORS = ['banks', 'hydro', 'microfinance', 'insurance', 'devbanks', 'finance'];
 var SECTOR_LABELS = { banks: 'Commercial Banks', hydro: 'Hydropower', microfinance: 'Microfinance', insurance: 'Insurance', devbanks: 'Dev Banks', finance: 'Finance' };
 
@@ -165,7 +164,11 @@ function fmtRet(pct) { const n = Number(pct); return (n >= 0 ? '+' : '') + (Math
 
 export default function NepseApp() {
   const [tab, setTab] = useState('today');
-  const [exchange, setExchange] = useState('NEPSE');
+  const [exchange, setExchange] = useState(DEFAULT_EXCHANGE);
+  // Server-gated availability per exchange (ENABLE_NYSE etc.) — the browser never
+  // reads server env; it asks /api/exchanges which market sources are live.
+  const [exAvail, setExAvail] = useState({ NEPSE: true });
+  const [showOnboard, setShowOnboard] = useState(false);
   const auth = useAuth(); // client view of admin state (server enforces the boundary)
 
   // Server-backed data
@@ -292,13 +295,15 @@ export default function NepseApp() {
   }
 
   // -- data loaders -----------------------------------------------------------
+  // Signals are a VIEW over the shared per-exchange scan output — filtering by the
+  // selected market is a read, never a scan trigger (CLAUDE.md guardrail).
   const loadSignals = useCallback(async () => {
     try {
-      const res = await fetch('/api/signals', { cache: 'no-store' });
+      const res = await fetch('/api/signals?exchange=' + encodeURIComponent(exchange), { cache: 'no-store' });
       const data = await res.json();
       if (Array.isArray(data.signals)) setSignals(data.signals.map(normalizeSig));
     } catch (err) { console.error('signals load failed:', err); }
-  }, []);
+  }, [exchange]);
 
   const loadActivity = useCallback(async () => {
     try {
@@ -362,10 +367,26 @@ export default function NepseApp() {
       if (v[5]) setChat(v[5]);
       if (v[6]) setStockCache(v[6]);
       if (v[7]) setMemory(v[7]);
+      var hasExchangePref = false;
       if (v[8]) {
         setSettings(Object.assign({}, DEFAULT_SETTINGS, v[8]));
-        if (v[8].exchange) setExchange(v[8].exchange);
+        if (v[8].exchange) { setExchange(v[8].exchange); hasExchangePref = true; }
       }
+
+      // Which markets are actually live (server-gated). NEPSE is always available.
+      try {
+        const exRes = await fetch('/api/exchanges', { cache: 'no-store' });
+        const exData = await exRes.json();
+        if (Array.isArray(exData.exchanges)) {
+          const avail = {};
+          exData.exchanges.forEach(function (e) { avail[e.id] = !!e.available; });
+          setExAvail(avail);
+        }
+      } catch (e) { /* keep NEPSE-only default */ }
+
+      // First run (no saved market preference): ask which market to trade.
+      if (!hasExchangePref) setShowOnboard(true);
+
       await Promise.all([loadSignals(), loadActivity()]);
       // Resume polling if a scan is already running server-side.
       try {
@@ -383,6 +404,14 @@ export default function NepseApp() {
   useEffect(() => {
     if (sidebarEnd.current) sidebarEnd.current.scrollIntoView({ behavior: 'smooth' });
   }, [chat, chatLoading]);
+
+  // Switching market re-reads the shared per-exchange signals (a view change, not a
+  // scan). Skip the very first render — the initial-load effect already fetched.
+  const exFirstRef = useRef(true);
+  useEffect(() => {
+    if (exFirstRef.current) { exFirstRef.current = false; return; }
+    loadSignals();
+  }, [exchange, loadSignals]);
 
   // Load the agent's real track record the first time the tab is opened.
   useEffect(() => {
@@ -538,6 +567,29 @@ export default function NepseApp() {
         })}
       </div>
 
+      {/* ONBOARDING — first-run "which market do you trade?" step. Minimal +
+          dismissible; sets the stored exchange preference (ni:settings.exchange). */}
+      {showOnboard && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: '#04060bdd', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 14, padding: '22px 24px', maxWidth: 460, width: '100%' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', marginBottom: 4 }}>Which market do you trade?</div>
+            <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 16 }}>Pick your exchange — you can change it any time in Settings.</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {Object.keys(EXCHANGES).map(function (exId) {
+                var ex = EXCHANGES[exId]; var avail = !!exAvail[exId];
+                return (
+                  <button key={exId} disabled={!avail} onClick={function () { if (avail) { saveExchange(exId); setShowOnboard(false); } }} style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid #1e2840', background: 'transparent', cursor: avail ? 'pointer' : 'not-allowed', opacity: avail ? 1 : 0.5, textAlign: 'left' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>{ex.name} <span style={{ color: '#4a5568', fontWeight: 400 }}>{ex.currency}</span></div>
+                    <div style={{ fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace', marginTop: 3 }}>{avail ? ex.source + ' · ' + ex.hours : 'not enabled on this deployment'}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={function () { saveExchange(exchange); setShowOnboard(false); }} style={{ marginTop: 14, fontSize: 10, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>skip — use {exchange}</button>
+          </div>
+        </div>
+      )}
+
       {/* HEADER */}
       <div style={{ background: '#07090e', borderBottom: '1px solid #141824', padding: '0 16px', flexShrink: 0 }}>
         {/* top bar */}
@@ -602,7 +654,7 @@ export default function NepseApp() {
       </div>
 
       {/* DISCLAIMER — persistent, on every surface (guardrail #2 + sample-data flag) */}
-      <Disclaimer />
+      <Disclaimer exchange={exchange} />
 
       {/* ACTIVITY PANEL */}
       {showLog && (
@@ -1085,8 +1137,11 @@ export default function NepseApp() {
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  {['NEPSE', 'NYSE'].map(function (exId) {
-                    var ex = EXCHANGES[exId]; var active = exchange === exId; var disabled = exId === 'NYSE';
+                  {Object.keys(EXCHANGES).map(function (exId) {
+                    var ex = EXCHANGES[exId]; var active = exchange === exId;
+                    // Availability is server-gated (e.g. NYSE behind ENABLE_NYSE);
+                    // an unavailable market is shown disabled with the reason.
+                    var disabled = !exAvail[exId];
                     return (
                       <button key={exId} onClick={function () { if (!disabled) saveExchange(exId); }} disabled={disabled} style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid ' + (active ? '#3b82f6' : '#1e2840'), background: active ? '#3b82f60e' : 'transparent', cursor: disabled ? 'not-allowed' : 'pointer', textAlign: 'left', opacity: disabled ? 0.6 : 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -1098,7 +1153,7 @@ export default function NepseApp() {
                           <span style={{ fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace' }}>{ex.hours}</span>
                           <span style={{ fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace' }}>{ex.source}</span>
                         </div>
-                        {exId === 'NYSE' && <div style={{ marginTop: 6, paddingLeft: 16, fontSize: 9, color: '#f59e0b', fontFamily: 'Inter,sans-serif' }}>coming in Level 2</div>}
+                        {disabled && <div style={{ marginTop: 6, paddingLeft: 16, fontSize: 9, color: '#f59e0b', fontFamily: 'Inter,sans-serif' }}>not enabled on this deployment</div>}
                       </button>
                     );
                   })}

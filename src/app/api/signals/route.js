@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { withGuard } from '@/lib/respond';
+import { normalizeExchange } from '@/lib/exchanges';
+import { exchangeColumnReady } from '@/lib/schemaFlags';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,20 +10,29 @@ export const dynamic = 'force-dynamic';
 const SIGNAL_RANK = { BUY: 0, SELL: 1, HOLD: 2, WATCH: 3, NEUTRAL: 4, AVOID: 5 };
 const CONF_RANK = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
-// GET /api/signals -> the latest scan's per-symbol trade signals for the UI.
-export const GET = withGuard(async () => {
+// GET /api/signals?exchange=NEPSE -> the latest scan's per-symbol trade signals for
+// the UI, filtered to one exchange (a VIEW over shared per-exchange data — switching
+// markets never triggers a scan). Defaults to NEPSE, matching the legacy behaviour
+// (all pre-migration scans/signals read as NEPSE via the column default).
+export const GET = withGuard(async (request) => {
   const supabase = getSupabase();
+  const exchange = normalizeExchange(request.nextUrl.searchParams.get('exchange'));
 
-  // Most recent scan (running or finished).
-  const { data: scans } = await supabase
+  // Most recent scan for THIS exchange (running or finished). The exchange filter is
+  // applied only when the column exists; on an unmigrated DB this is the legacy
+  // "latest scan overall" query (byte-for-byte NEPSE behaviour).
+  const hasExchangeCol = await exchangeColumnReady();
+  let scanQuery = supabase
     .from('scans')
     .select('id, status, started_at, completed_at')
     .order('started_at', { ascending: false })
     .limit(1);
+  if (hasExchangeCol) scanQuery = scanQuery.eq('exchange', exchange);
+  const { data: scans } = await scanQuery;
 
   const scan = scans?.[0];
   if (!scan) {
-    return NextResponse.json({ scan_id: null, signals: [], actionable: [] });
+    return NextResponse.json({ scan_id: null, exchange, signals: [], actionable: [] });
   }
 
   const { data: rows } = await supabase
@@ -50,6 +61,7 @@ export const GET = withGuard(async () => {
 
   return NextResponse.json({
     scan_id: scan.id,
+    exchange,
     scan_status: scan.status,
     scanned_at: scan.completed_at || scan.started_at,
     signals,

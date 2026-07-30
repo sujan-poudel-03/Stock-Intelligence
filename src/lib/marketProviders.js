@@ -65,15 +65,31 @@ export const PROVIDERS = [
     // production until deliberately switched on (same "unavailable → dropped" gate
     // as nepalstock's token). NEPSE never resolves this source.
     requiresEnv: ['ENABLE_NYSE'],
+    // ENABLE_NYSE is a boolean flag, not a credential: it must parse TRUTHY to
+    // enable (so ENABLE_NYSE=false / 0 / no stays disabled). Contrast with a token
+    // like NEPALSTOCK_API_TOKEN where mere presence = enabled.
+    truthyEnv: ['ENABLE_NYSE'],
     fetch: fetchYahoo,
   },
 ];
 
 export const PROVIDER_REGISTRY = Object.fromEntries(PROVIDERS.map((p) => [p.id, p.fetch]));
 
+// Truthy-flag parse for boolean env gates (e.g. ENABLE_NYSE): only 1/true/yes enable.
+const TRUTHY_ENV = /^(1|true|yes)$/i;
+
 // A provider is "configured" when every env var it requires is present + non-empty.
+// A var listed in the provider's `truthyEnv` must ALSO parse truthy — so a boolean
+// flag set to "false"/"0" counts as NOT configured, while a credential var counts as
+// configured on mere presence.
 function isConfigured(p, env = process.env) {
-  return (p.requiresEnv || []).every((k) => !!(env[k] && String(env[k]).trim()));
+  const truthy = p.truthyEnv || [];
+  return (p.requiresEnv || []).every((k) => {
+    const v = env[k];
+    if (!(v && String(v).trim())) return false;
+    if (truthy.includes(k)) return TRUTHY_ENV.test(String(v).trim());
+    return true;
+  });
 }
 // A provider is "available" (selectable) when it's implemented AND configured.
 function isAvailable(p, env = process.env) {

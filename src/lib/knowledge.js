@@ -1,4 +1,5 @@
 import { getSupabase } from './supabase.js';
+import { scopeKey, DEFAULT_EXCHANGE } from './exchanges.js';
 
 // Qualitative knowledge base. The statistical `weights` table answers "how often
 // has this kind of trade worked"; this answers "what have we actually learned".
@@ -11,11 +12,13 @@ import { getSupabase } from './supabase.js';
 const MAX_RECORDS = 8; // keep the most recent N outcome lines per note
 const MAX_CONTENT = 1200; // hard cap on stored note length (chars)
 
-function symbolKey(symbol) {
-  return `SYMBOL_NOTE:${String(symbol).toUpperCase()}`;
+// Notes are namespaced by exchange via scopeKey — NEPSE keys stay UNPREFIXED so
+// existing rows keep accruing; every other exchange gets an `${EXCHANGE}:` prefix.
+function symbolKey(symbol, exchange = DEFAULT_EXCHANGE) {
+  return scopeKey(exchange, `SYMBOL_NOTE:${String(symbol).toUpperCase()}`);
 }
-function sectorKey(sector) {
-  return `SECTOR_NOTE:${slug(sector)}`;
+function sectorKey(sector, exchange = DEFAULT_EXCHANGE) {
+  return scopeKey(exchange, `SECTOR_NOTE:${slug(sector)}`);
 }
 
 // Append one resolved-outcome record to a note, newest first, capped.
@@ -53,6 +56,7 @@ async function appendNote(supabase, { kind, key, line }) {
  */
 export async function recordOutcomeKnowledge(supabase, sig, outcome, exitPrice, returnPct) {
   try {
+    const exchange = sig.exchange || DEFAULT_EXCHANGE;
     const date = new Date().toISOString().slice(0, 10);
     const ret = Number.isFinite(returnPct) ? `${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%` : 'n/a';
     const why = sig.why ? ` — thesis: ${sig.why}` : '';
@@ -60,11 +64,11 @@ export async function recordOutcomeKnowledge(supabase, sig, outcome, exitPrice, 
     const line = `[${date}] ${sig.signal} entry≈${sig.price ?? '?'} → ${outcome} ${ret} at ${exitPrice}${why}${risk}`;
 
     if (sig.symbol) {
-      await appendNote(supabase, { kind: 'symbol_note', key: symbolKey(sig.symbol), line });
+      await appendNote(supabase, { kind: 'symbol_note', key: symbolKey(sig.symbol, exchange), line });
     }
     if (sig.sector) {
       const secLine = `[${date}] ${sig.symbol} ${sig.signal} → ${outcome} ${ret}`;
-      await appendNote(supabase, { kind: 'sector_note', key: sectorKey(sig.sector), line: secLine });
+      await appendNote(supabase, { kind: 'sector_note', key: sectorKey(sig.sector, exchange), line: secLine });
     }
   } catch {
     /* best-effort: knowledge accrual must never break outcome resolution */
@@ -77,12 +81,12 @@ export async function recordOutcomeKnowledge(supabase, sig, outcome, exitPrice, 
  *   "NABIL history:\n[2026-06-10] BUY entry≈510 → WIN +6.2% at 542 ...\nHydropower notes: ..."
  * Returns '' when nothing has been learned yet.
  */
-export async function getKnowledgeContext(symbol, sector) {
+export async function getKnowledgeContext(symbol, sector, exchange = DEFAULT_EXCHANGE) {
   const supabase = getSupabase();
 
   const wanted = [];
-  if (symbol) wanted.push(symbolKey(symbol));
-  if (sector) wanted.push(sectorKey(sector));
+  if (symbol) wanted.push(symbolKey(symbol, exchange));
+  if (sector) wanted.push(sectorKey(sector, exchange));
   if (!wanted.length) return '';
 
   const { data } = await supabase.from('knowledge').select('key, content').in('key', wanted);
@@ -91,11 +95,11 @@ export async function getKnowledgeContext(symbol, sector) {
   const byKey = Object.fromEntries(data.map((k) => [k.key, k.content]));
   const parts = [];
 
-  if (symbol && byKey[symbolKey(symbol)]) {
-    parts.push(`${String(symbol).toUpperCase()} history:\n${byKey[symbolKey(symbol)]}`);
+  if (symbol && byKey[symbolKey(symbol, exchange)]) {
+    parts.push(`${String(symbol).toUpperCase()} history:\n${byKey[symbolKey(symbol, exchange)]}`);
   }
-  if (sector && byKey[sectorKey(sector)]) {
-    parts.push(`${sector} sector notes:\n${byKey[sectorKey(sector)]}`);
+  if (sector && byKey[sectorKey(sector, exchange)]) {
+    parts.push(`${sector} sector notes:\n${byKey[sectorKey(sector, exchange)]}`);
   }
 
   return parts.join('\n\n');

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery } from '@/lib/scan';
+import { normalizeExchange } from '@/lib/exchanges';
+import { exchangeColumnReady } from '@/lib/schemaFlags';
 import { triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { withGuard } from '@/lib/respond';
@@ -32,6 +34,12 @@ async function handle(request) {
   // 'full' (default, ~once/day) does the complete market + discovery + scan.
   const mode = request.nextUrl.searchParams.get('mode') === 'light' ? 'light' : 'full';
 
+  // Which market this run targets. Defaults to NEPSE (the byte-for-byte legacy
+  // path); ?exchange=NYSE routes the whole chain — market read, discovery seed,
+  // price sources, learning scope — at the selected exchange. Data stays GLOBAL
+  // PER exchange (one scan serves every user of that market).
+  const exchange = normalizeExchange(request.nextUrl.searchParams.get('exchange'));
+
   // Idempotency guard: skip if a scan started < 30 min ago and is still active.
   const cutoff = new Date(Date.now() - SCAN_GUARD_MS).toISOString();
   const { data: recent } = await supabase
@@ -46,18 +54,22 @@ async function handle(request) {
     return NextResponse.json({ skipped: true, reason: 'scan in progress', scan_id: recent[0].id });
   }
 
-  // 1. Create the scan row.
+  // 1. Create the scan row. The `exchange` column is only written when the migration
+  // that adds it is applied — otherwise NEPSE stays byte-for-byte on the old schema.
   const startedAt = new Date().toISOString();
+  const hasExchangeCol = await exchangeColumnReady();
+  const scanInsert = {
+    status: 'pending',
+    phase: 'market',
+    total: 0,
+    completed: 0,
+    failed: 0,
+    started_at: startedAt,
+  };
+  if (hasExchangeCol) scanInsert.exchange = exchange;
   const { data: scanRows, error: scanErr } = await supabase
     .from('scans')
-    .insert({
-      status: 'pending',
-      phase: 'market',
-      total: 0,
-      completed: 0,
-      failed: 0,
-      started_at: startedAt,
-    })
+    .insert(scanInsert)
     .select()
     .single();
 
@@ -71,7 +83,7 @@ async function handle(request) {
     market = (await loadRecentMarket(supabase, scanId)) || {};
   } else {
     try {
-      market = await scanMarket();
+      market = await scanMarket(exchange);
     } catch (err) {
       await supabase
         .from('scans')
@@ -89,7 +101,7 @@ async function handle(request) {
   // Full mode runs discovery unless the V1 Settings tab turned it off.
   if (mode === 'full' && settings.discovery_on !== false) {
     try {
-      discovered = await runDiscovery(market, settings);
+      discovered = await runDiscovery(market, settings, exchange);
     } catch (err) {
       console.error('discovery failed:', err?.message || err);
     }
@@ -163,6 +175,7 @@ async function handle(request) {
   return NextResponse.json({
     started: true,
     mode,
+    exchange,
     scan_id: scanId,
     total: symbols.length,
     discovered,

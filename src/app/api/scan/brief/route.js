@@ -5,6 +5,7 @@ import { checkOutcomes } from '@/lib/outcomes';
 import { runBackground } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { notify, formatScanDigest } from '@/lib/notify';
+import { exchangeColumnReady } from '@/lib/schemaFlags';
 import { withGuard } from '@/lib/respond';
 import { KV, SIGNAL_HISTORY_SCANS, WATCH_PROMOTE_MIN } from '@/lib/constants';
 
@@ -48,13 +49,18 @@ export const POST = withGuard(async (request) => {
   const failures = (jobs || []).filter((j) => j.status === 'permanently_failed');
   const skipped = (jobs || []).filter((j) => j.status === 'skipped');
 
-  const { data: scan } = await supabase.from('scans').select('market').eq('id', scanId).maybeSingle();
+  const hasExchangeCol = await exchangeColumnReady();
+  const { data: scan } = await supabase
+    .from('scans')
+    .select(hasExchangeCol ? 'market, exchange' : 'market')
+    .eq('id', scanId)
+    .maybeSingle();
   const portfolio = await loadPortfolio(supabase);
 
-  // 2. Generate the brief.
+  // 2. Generate the brief, framed + learning-scoped to the scan's exchange.
   let brief = {};
   try {
-    brief = await runBrief(doneSignals, scan?.market || {}, portfolio);
+    brief = await runBrief(doneSignals, scan?.market || {}, portfolio, scan?.exchange || 'NEPSE');
   } catch (err) {
     console.error('brief generation failed:', err?.message || err);
     brief = { headline: 'Brief unavailable', summary: '', topPicks: [], watch: [], risks: '', stale: [] };

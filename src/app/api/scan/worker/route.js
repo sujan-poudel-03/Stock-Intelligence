@@ -3,6 +3,8 @@ import { getSupabase } from '@/lib/supabase';
 import { scanOneStock, deterministicSignal } from '@/lib/scan';
 import { getVerifiedPrice } from '@/lib/marketProviders';
 import { getWeightContext } from '@/lib/calibration';
+import { normalizeExchange, DEFAULT_EXCHANGE } from '@/lib/exchanges';
+import { exchangeColumnReady } from '@/lib/schemaFlags';
 import { runBackground, triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { humanizeError } from '@/lib/humanizeError';
@@ -93,15 +95,27 @@ async function claimJob(supabase, { symbol, force }) {
 async function processJob(supabase, job, origin) {
   const scanId = job.scan_id;
 
+  // Read this scan's market context + exchange once — both the budget-saver and the
+  // normal path route on the scan's exchange (defaults to NEPSE for legacy rows).
+  // The exchange column is only read when the migration adding it is applied.
+  const hasExchangeCol = await exchangeColumnReady();
+  const { data: scan } = await supabase
+    .from('scans')
+    .select(hasExchangeCol ? 'market, exchange' : 'market')
+    .eq('id', scanId)
+    .maybeSingle();
+  const exchange = normalizeExchange(scan?.exchange || DEFAULT_EXCHANGE);
+
   // Budget-saver mode: when the daily LLM budget is spent, don't vanish — emit a
   // clearly-marked deterministic signal from the symbol's last known price. If we
   // have no prior price to work from, skip the stock cleanly (scan ends 'partial').
   if ((await remaining()) < CALLS_PER_STOCK) {
     // Prefer a live VERIFIED price (no LLM cost); fall back to the last known price
-    // from a prior signal only if no source can verify one right now.
-    const verified = await getVerifiedPrice(job.symbol).catch(() => null);
+    // from a prior signal only if no source can verify one right now. Verify against
+    // the scan's exchange sources.
+    const verified = await getVerifiedPrice(job.symbol, { exchange }).catch(() => null);
     const price = verified?.verified ? verified.price : await lastKnownPrice(supabase, job.symbol);
-    const fallback = price ? deterministicSignal({ symbol: job.symbol, price }) : null;
+    const fallback = price ? deterministicSignal({ symbol: job.symbol, price }, exchange) : null;
 
     if (fallback) {
       await insertSignal(supabase, scanId, fallback);
@@ -134,17 +148,10 @@ async function processJob(supabase, job, origin) {
   }
 
   try {
-    // Pull market context for this scan.
-    const { data: scan } = await supabase
-      .from('scans')
-      .select('market')
-      .eq('id', scanId)
-      .maybeSingle();
-
     await supabase.from('scans').update({ current_symbol: job.symbol }).eq('id', scanId);
 
-    const weightCtx = await getWeightContext(job.symbol, null);
-    const signal = await scanOneStock(job.symbol, scan?.market || {}, weightCtx);
+    const weightCtx = await getWeightContext(job.symbol, null, exchange);
+    const signal = await scanOneStock(job.symbol, scan?.market || {}, weightCtx, null, { exchange });
 
     await insertSignal(supabase, scanId, signal);
 
@@ -211,8 +218,10 @@ async function processJob(supabase, job, origin) {
 }
 
 // Persist one signal row. Shared by the normal path and budget-saver fallback.
+// `exchange` is written only when the column exists (best-effort migration gate) so
+// the NEPSE insert stays byte-for-byte on an unmigrated DB.
 async function insertSignal(supabase, scanId, signal) {
-  await supabase.from('signals').insert({
+  const row = {
     scan_id: scanId,
     symbol: signal.symbol,
     signal: signal.signal,
@@ -230,7 +239,9 @@ async function insertSignal(supabase, scanId, signal) {
     live_data: signal.live_data,
     outcome: 'PENDING',
     created_at: new Date().toISOString(),
-  });
+  };
+  if (await exchangeColumnReady()) row.exchange = signal.exchange || 'NEPSE';
+  await supabase.from('signals').insert(row);
 }
 
 // Most recent non-null price for a symbol, for the budget-saver deterministic

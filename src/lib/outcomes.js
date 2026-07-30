@@ -4,6 +4,13 @@ import { updateWeights } from './calibration.js';
 import { recordOutcomeKnowledge } from './knowledge.js';
 import { logEvent } from './events.js';
 import { sendAlert } from './email.js';
+import { normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
+
+// Compose the per-exchange price-map key so two exchanges that happen to share a
+// ticker never collide (verified prices come from different sources per exchange).
+function priceKey(symbol, exchange) {
+  return `${normalizeExchange(exchange)}::${String(symbol).toUpperCase()}`;
+}
 
 // checkOutcomes(): for every PENDING signal, fetch the latest price and resolve
 // it to WIN (price >= target) or LOSS (price <= sl). Updates the signals row,
@@ -22,13 +29,13 @@ export async function checkOutcomes() {
     return { checked: 0, resolved: 0, outcomes: [] };
   }
 
-  const symbols = [...new Set(pending.map((s) => s.symbol).filter(Boolean))];
-  const prices = await fetchLatestPrices(symbols);
+  const prices = await fetchLatestPrices(pending);
 
   const resolved = [];
 
   for (const sig of pending) {
-    const price = prices[sig.symbol?.toUpperCase()];
+    const exchange = sig.exchange || DEFAULT_EXCHANGE;
+    const price = prices[priceKey(sig.symbol, exchange)];
     if (price == null) continue;
 
     const target = numOrNull(sig.target);
@@ -68,8 +75,9 @@ export async function checkOutcomes() {
       created_at: now,
     });
 
-    // Update calibration (statistical) + knowledge base (qualitative lessons).
-    await updateWeights(sig.symbol, sig.sector, sig.signal, outcome, returnPct);
+    // Update calibration (statistical) + knowledge base (qualitative lessons),
+    // scoped to the signal's exchange so NYSE learns from its own outcomes.
+    await updateWeights(sig.symbol, sig.sector, sig.signal, outcome, returnPct, exchange);
     await recordOutcomeKnowledge(supabase, sig, outcome, price, returnPct);
 
     // Alert.
@@ -94,19 +102,26 @@ export async function checkOutcomes() {
   return { checked: pending.length, resolved: resolved.length, outcomes: resolved };
 }
 
-// Fetch latest VERIFIED prices for a batch of NEPSE symbols. Outcome resolution
+// Fetch latest VERIFIED prices for a batch of pending signals. Outcome resolution
 // decides real money (WIN at target / LOSS at stop), so the exit price must be
-// ground truth — never LLM-sourced (CLAUDE.md guardrail #1). Any symbol whose
-// price can't be verified maps to null and is simply left PENDING (retried next run).
-async function fetchLatestPrices(symbols) {
-  if (!symbols.length) return {};
+// ground truth — never LLM-sourced (CLAUDE.md guardrail #1). Each signal is verified
+// against ITS OWN exchange's sources (NEPSE → merolagani, NYSE → yahoo). Any symbol
+// whose price can't be verified maps to null and is left PENDING (retried next run).
+async function fetchLatestPrices(pending) {
+  const seen = new Map(); // priceKey -> { symbol, exchange }
+  for (const sig of pending) {
+    if (!sig.symbol) continue;
+    const exchange = sig.exchange || DEFAULT_EXCHANGE;
+    const key = priceKey(sig.symbol, exchange);
+    if (!seen.has(key)) seen.set(key, { symbol: sig.symbol, exchange });
+  }
+  if (!seen.size) return {};
 
   const out = {};
   await Promise.all(
-    symbols.map(async (sym) => {
-      const key = String(sym).toUpperCase();
+    [...seen.entries()].map(async ([key, { symbol, exchange }]) => {
       try {
-        const r = await getVerifiedPrice(sym);
+        const r = await getVerifiedPrice(symbol, { exchange });
         out[key] = r.verified ? r.price : null;
       } catch {
         out[key] = null;
