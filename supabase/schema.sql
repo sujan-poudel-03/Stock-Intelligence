@@ -33,12 +33,14 @@ create table if not exists signals (
   exit_price  numeric,
   outcome_at  timestamptz,
   return_pct  numeric,
+  exchange    text default 'NEPSE',   -- multi-exchange dimension; null/pre-migration reads as NEPSE
   created_at  timestamptz default now()
 );
 
 create index if not exists signals_scan_id_idx   on signals (scan_id);
 create index if not exists signals_symbol_idx     on signals (symbol);
 create index if not exists signals_outcome_idx     on signals (outcome);
+create index if not exists signals_exchange_idx    on signals (exchange);
 create index if not exists signals_created_at_idx on signals (created_at desc);
 
 -- 3. scans — one row per scan run (referred to as "scan_runs" in route docs)
@@ -53,12 +55,14 @@ create table if not exists scans (
   signals        jsonb,
   market         jsonb,
   brief          jsonb,
+  exchange       text default 'NEPSE',   -- which market this run scanned; null/pre-migration reads as NEPSE
   started_at     timestamptz default now(),
   completed_at   timestamptz,
   error          text
 );
 
 create index if not exists scans_status_idx     on scans (status);
+create index if not exists scans_exchange_idx   on scans (exchange);
 create index if not exists scans_started_at_idx on scans (started_at desc);
 
 -- 4. scan_jobs — one row per symbol queued in a scan

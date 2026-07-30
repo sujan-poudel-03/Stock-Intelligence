@@ -15,6 +15,8 @@
 //   'stub'   — not yet implemented (returns null); never available
 
 import { verifiedPrice, resolveProviders } from './marketData.js';
+import { fetchYahooStock, normalizeYahooQuote } from './yahoo.js';
+import { getExchange, normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
 
 export const ACTIVE_SOURCES_KEY = 'ni:market_sources';
 // Code default is the offline `sample` source so the app runs with no network/config.
@@ -53,6 +55,17 @@ export const PROVIDERS = [
     status: 'sample',
     requiresEnv: [],
     fetch: fetchSample,
+  },
+  {
+    id: 'yahoo',
+    label: 'Yahoo Finance (NYSE)',
+    description: 'finance.yahoo.com chart API — US equities (NYSE/Nasdaq). Feature-gated behind ENABLE_NYSE.',
+    status: 'live',
+    // Yahoo needs no API key; the ENABLE_NYSE flag keeps NYSE unselectable in
+    // production until deliberately switched on (same "unavailable → dropped" gate
+    // as nepalstock's token). NEPSE never resolves this source.
+    requiresEnv: ['ENABLE_NYSE'],
+    fetch: fetchYahoo,
   },
 ];
 
@@ -148,13 +161,45 @@ export function activeProviders(env = process.env, registry = PROVIDER_REGISTRY)
 
 // getVerifiedPrice(symbol, opts): app-facing entry point. Uses the admin-selected
 // sources unless the caller injects its own providers (tests, backtest harness).
+//
+// exchange dimension (additive): when `opts.exchange` is absent or 'NEPSE', the path
+// below is BYTE-FOR-BYTE the old behaviour (admin-selected sources, core-default
+// reconcile opts). When it names a non-default exchange (e.g. 'NYSE'), the exchange's
+// configured sourceIds (filtered through the same availability gate) + its reconcileOpts
+// are used instead — the verified-price CORE (marketData.js) is untouched; only its
+// inputs vary. A caller injecting its own `providers` bypasses all routing (tests).
 export async function getVerifiedPrice(symbol, opts = {}) {
-  let providers = opts.providers;
+  const { exchange, ...rest } = opts;
+  let providers = rest.providers;
+  let reconcileOpts = {};
+
   if (!providers) {
-    const names = await getActiveSources();
-    providers = resolveProviders(names, PROVIDER_REGISTRY).map((p) => p.fn);
+    const ex = normalizeExchange(exchange);
+    if (ex === DEFAULT_EXCHANGE) {
+      // Unchanged NEPSE path: admin-selected sources, core-default reconcile opts.
+      const names = await getActiveSources();
+      providers = resolveProviders(names, PROVIDER_REGISTRY).map((p) => p.fn);
+    } else {
+      // Non-default exchange: its configured sources (availability-gated) + opts.
+      const cfg = getExchange(ex);
+      const validIds = validateSources(cfg.sourceIds || []);
+      providers = resolveProviders(validIds, PROVIDER_REGISTRY).map((p) => p.fn);
+      reconcileOpts = cfg.reconcileOpts || {};
+    }
   }
-  return verifiedPrice(symbol, { ...opts, providers });
+  return verifiedPrice(symbol, { ...reconcileOpts, ...rest, providers });
+}
+
+// --- yahoo (NYSE) provider -------------------------------------------------
+
+// Wrap the raw Yahoo fetcher and normalize to the core's quote shape. Best-effort:
+// any failure (network, layout change, no price) returns null so the verified layer
+// fails closed — exactly like the NEPSE scrapers.
+async function fetchYahoo(symbol) {
+  const s = String(symbol || '').toUpperCase();
+  if (!s) return null;
+  const stock = await fetchYahooStock(s);
+  return normalizeYahooQuote(stock, s);
 }
 
 // --- providers -------------------------------------------------------------

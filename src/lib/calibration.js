@@ -1,5 +1,6 @@
 import { getSupabase } from './supabase.js';
 import { wilsonLowerBound, decayedCounts } from './stats.js';
+import { scopeKey, DEFAULT_EXCHANGE } from './exchanges.js';
 
 // Half-life for time-decayed calibration counts (~one quarter). Older outcomes
 // fade so a slice tracks the recent regime, not its lifetime average.

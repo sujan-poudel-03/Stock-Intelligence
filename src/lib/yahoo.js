@@ -47,3 +47,19 @@ export async function fetchYahooStock(symbol) {
     return null;
   }
 }
+
+// normalizeYahooQuote(stock, symbol): map a fetchYahooStock() result into the
+// verified-price core's raw-quote shape { symbol, price, prevClose, asOf, source }.
+// Pure — returns null when there's no usable price so the layer fails closed.
+export function normalizeYahooQuote(stock, symbol) {
+  const price = stock == null ? null : Number(stock.price);
+  if (!Number.isFinite(price)) return null;
+  const prev = Number(stock.previousClose);
+  return {
+    symbol: String(stock.symbol || symbol || '').toUpperCase() || null,
+    price,
+    prevClose: Number.isFinite(prev) ? prev : null,
+    asOf: Date.now(),
+    source: 'yahoo',
+  };
+}
