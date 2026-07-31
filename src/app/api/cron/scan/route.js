@@ -40,15 +40,19 @@ async function handle(request) {
   // PER exchange (one scan serves every user of that market).
   const exchange = normalizeExchange(request.nextUrl.searchParams.get('exchange'));
 
-  // Idempotency guard: skip if a scan started < 30 min ago and is still active.
+  // Idempotency guard: skip if a scan for THIS exchange started < 30 min ago and is
+  // still active. Scoped per-exchange (when the column exists) so a NEPSE scan in
+  // flight never blocks a NYSE trigger and vice versa; falls back to a global guard
+  // on an unmigrated DB (single-exchange, so equivalent).
+  const hasExchangeCol = await exchangeColumnReady();
   const cutoff = new Date(Date.now() - SCAN_GUARD_MS).toISOString();
-  const { data: recent } = await supabase
+  let guardQuery = supabase
     .from('scans')
     .select('id, status, started_at')
     .gte('started_at', cutoff)
-    .in('status', ['pending', 'running'])
-    .order('started_at', { ascending: false })
-    .limit(1);
+    .in('status', ['pending', 'running']);
+  if (hasExchangeCol) guardQuery = guardQuery.eq('exchange', exchange);
+  const { data: recent } = await guardQuery.order('started_at', { ascending: false }).limit(1);
 
   if (recent && recent.length > 0) {
     return NextResponse.json({ skipped: true, reason: 'scan in progress', scan_id: recent[0].id });
@@ -57,7 +61,6 @@ async function handle(request) {
   // 1. Create the scan row. The `exchange` column is only written when the migration
   // that adds it is applied — otherwise NEPSE stays byte-for-byte on the old schema.
   const startedAt = new Date().toISOString();
-  const hasExchangeCol = await exchangeColumnReady();
   const scanInsert = {
     status: 'pending',
     phase: 'market',

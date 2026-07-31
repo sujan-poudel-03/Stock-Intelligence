@@ -424,7 +424,7 @@ export default function NepseApp() {
     setScanStarting(true);
     addLog('scan requested', 'info');
     try {
-      const res = await fetch('/api/cron/scan', { method: 'POST' });
+      const res = await fetch('/api/cron/scan?exchange=' + encodeURIComponent(exchange), { method: 'POST' });
       const data = await res.json();
       if (data.skipped) addLog('scan already in progress', 'info');
       else if (data.started) addLog('scan started — ' + data.total + ' stocks (' + (data.sentiment || 'NEUTRAL') + ')', 'ok');
@@ -435,7 +435,7 @@ export default function NepseApp() {
     } finally {
       setScanStarting(false);
     }
-  }, [running, scanStarting, addLog, startPolling]);
+  }, [running, scanStarting, addLog, startPolling, exchange]);
 
   const retryStock = useCallback(async (symbol) => {
     addLog('retrying ' + symbol + '…', 'api');

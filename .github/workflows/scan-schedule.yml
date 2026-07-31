@@ -1,13 +1,20 @@
-name: NEPSE scan schedule
+name: Market scan schedule
 
 # Free external scheduler for the deployed app. GitHub Actions cron runs in UTC and
 # replaces Vercel Hobby's 1-job/day cron limit. Each run just POSTs to the scan
 # endpoint; the actual work runs on the deployed app (Vercel), not in this runner.
 #
-# KEEP THE CRON TIMES IN SYNC with vercel.json / src/lib/schedule.js (UTC):
+# Two markets, each on its own trading week / hours (UTC). The run step maps each
+# cron string to (exchange, mode); a manual dispatch can override both.
+#
+# NEPSE (Sun–Thu, 11:00–15:00 NPT = UTC+5:45) — mirrored in src/lib/schedule.js:
 #   45 3 * * 0-4       -> 09:30 NPT  full pre-open
 #   15,45 5-8 * * 0-4  -> 11:00–14:30 NPT every 30 min, light intraday
 #   45 9 * * 0-4       -> 15:30 NPT  full post-close
+# NYSE (Mon–Fri, 09:30–16:00 ET) — post-close snapshot, DST-safe (fires after 16:00
+# in both EDT/UTC-4 and EST/UTC-5); NOT mirrored in schedule.js (UI next-scan is
+# NEPSE-centric until per-exchange schedule display lands):
+#   15 21 * * 1-5      -> 17:15 EDT / 16:15 EST  full post-close
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   APP_BASE_URL  e.g. https://your-app.vercel.app   (no trailing slash)
@@ -18,11 +25,17 @@ name: NEPSE scan schedule
 
 on:
   schedule:
-    - cron: '45 3 * * 0-4'        # full pre-open
-    - cron: '15,45 5-8 * * 0-4'   # light intraday
-    - cron: '45 9 * * 0-4'        # full post-close
+    - cron: '45 3 * * 0-4'        # NEPSE full pre-open
+    - cron: '15,45 5-8 * * 0-4'   # NEPSE light intraday
+    - cron: '45 9 * * 0-4'        # NEPSE full post-close
+    - cron: '15 21 * * 1-5'       # NYSE full post-close
   workflow_dispatch:
     inputs:
+      exchange:
+        description: 'Exchange (manual run)'
+        default: NEPSE
+        type: choice
+        options: [NEPSE, NYSE]
       mode:
         description: 'Scan mode (manual run)'
         default: full
@@ -30,7 +43,8 @@ on:
         options: [full, light]
 
 concurrency:
-  group: nepse-scan
+  # Per-exchange group so a NEPSE run never cancels/queues behind a NYSE run.
+  group: market-scan-${{ github.event.inputs.exchange || 'sched' }}
   cancel-in-progress: false
 
 jobs:
@@ -43,6 +57,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           TRIGGER_SCHEDULE: ${{ github.event.schedule }}
           DISPATCH_MODE: ${{ github.event.inputs.mode }}
+          DISPATCH_EXCHANGE: ${{ github.event.inputs.exchange }}
         run: |
           set -euo pipefail
 
@@ -50,16 +65,22 @@ jobs:
             echo "::error::APP_BASE_URL secret is not set"; exit 1
           fi
 
-          # Decide mode: the intraday cron is 'light'; everything else is 'full'.
-          # A manual workflow_dispatch can override via the 'mode' input.
-          MODE="full"
-          if [ "${TRIGGER_SCHEDULE:-}" = "15,45 5-8 * * 0-4" ]; then MODE="light"; fi
+          # Map the triggering cron to (exchange, mode). NEPSE intraday is 'light';
+          # everything else 'full'. A manual dispatch overrides both via its inputs.
+          EXCHANGE="NEPSE"; MODE="full"
+          case "${TRIGGER_SCHEDULE:-}" in
+            "45 3 * * 0-4")       EXCHANGE="NEPSE"; MODE="full"  ;;
+            "15,45 5-8 * * 0-4")  EXCHANGE="NEPSE"; MODE="light" ;;
+            "45 9 * * 0-4")       EXCHANGE="NEPSE"; MODE="full"  ;;
+            "15 21 * * 1-5")      EXCHANGE="NYSE";  MODE="full"  ;;
+          esac
+          if [ -n "${DISPATCH_EXCHANGE:-}" ]; then EXCHANGE="${DISPATCH_EXCHANGE}"; fi
           if [ -n "${DISPATCH_MODE:-}" ]; then MODE="${DISPATCH_MODE}"; fi
 
-          URL="${APP_BASE_URL%/}/api/cron/scan"
-          if [ "$MODE" = "light" ]; then URL="${URL}?mode=light"; fi
+          URL="${APP_BASE_URL%/}/api/cron/scan?exchange=${EXCHANGE}"
+          if [ "$MODE" = "light" ]; then URL="${URL}&mode=light"; fi
 
-          echo "Triggering ${MODE} scan -> ${URL}"
+          echo "Triggering ${MODE} ${EXCHANGE} scan -> ${URL}"
           code=$(curl -sS -o response.json -w '%{http_code}' -X POST "$URL" \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "content-type: application/json")
