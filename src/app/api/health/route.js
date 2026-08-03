@@ -17,6 +17,10 @@ export async function GET() {
   const env = {
     supabase: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY),
     llm_key: Boolean(process.env[llmKeyVar]),
+    // Phase 2: presence-only flag (never the value) so we can confirm the cron's
+    // RLS-bypass write key is set before turning RLS on. Not yet required for
+    // readiness — informational until the multi-tenant write path lands.
+    service_role: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
   };
 
   const db = { reachable: false, tables_present: [], tables_missing: [] };
