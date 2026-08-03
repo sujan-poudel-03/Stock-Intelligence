@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
-import { withGuard } from '@/lib/respond';
+import { withGuard, edgeCache } from '@/lib/respond';
 import { wilsonLowerBound, riskAdjustedReturn } from '@/lib/stats';
 
 export const dynamic = 'force-dynamic';
@@ -54,25 +54,30 @@ export const GET = withGuard(async () => {
     .sort((a, b) => b.confidence - a.confidence || b.trades - a.trades)
     .slice(0, 8);
 
-  return NextResponse.json({
-    overall: summarize(rows),
-    byDirection: {
-      BUY: summarize(rows.filter((r) => r.signal === 'BUY')),
-      SELL: summarize(rows.filter((r) => r.signal === 'SELL')),
+  // Global marketing surface, changes only as outcomes resolve (slow) → edge-cache
+  // 60s across all visitors.
+  return NextResponse.json(
+    {
+      overall: summarize(rows),
+      byDirection: {
+        BUY: summarize(rows.filter((r) => r.signal === 'BUY')),
+        SELL: summarize(rows.filter((r) => r.signal === 'SELL')),
+      },
+      bySector,
+      pending: pending || 0,
+      recent: rows.slice(0, 40).map((r) => ({
+        symbol: r.symbol,
+        signal: r.signal,
+        sector: r.sector || null,
+        entry: numOrNull(r.price),
+        exit: numOrNull(r.exit_price),
+        outcome: r.outcome,
+        returnPct: r.return_pct != null ? round2(Number(r.return_pct)) : null,
+        at: r.outcome_at,
+      })),
     },
-    bySector,
-    pending: pending || 0,
-    recent: rows.slice(0, 40).map((r) => ({
-      symbol: r.symbol,
-      signal: r.signal,
-      sector: r.sector || null,
-      entry: numOrNull(r.price),
-      exit: numOrNull(r.exit_price),
-      outcome: r.outcome,
-      returnPct: r.return_pct != null ? round2(Number(r.return_pct)) : null,
-      at: r.outcome_at,
-    })),
-  });
+    { headers: edgeCache(60) }
+  );
 });
 
 function round2(n) {

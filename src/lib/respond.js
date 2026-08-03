@@ -17,6 +17,20 @@ export function withGuard(handler) {
   };
 }
 
+// Edge/CDN cache header for GLOBAL, non-personalized read endpoints. Because market
+// data is shared across all users (one scan serves everyone), the same response can
+// be cached at Vercel's edge for `sMaxAge` seconds and served to every user without
+// re-running the function or re-reading the DB — cost scales with scans, not loads.
+// `stale-while-revalidate` serves the slightly-stale copy while one request refreshes
+// it in the background, so no user ever waits on a cold recompute.
+//
+// ONLY for endpoints with no per-user/auth-specific output. When Phase 2 adds
+// per-user filtering, personalized responses must NOT use this (they'd leak/cross
+// cache between users) — revisit at that point.
+export function edgeCache(sMaxAge, swr = sMaxAge * 2) {
+  return { 'Cache-Control': `public, s-maxage=${sMaxAge}, stale-while-revalidate=${swr}` };
+}
+
 function mapError(err) {
   // Missing Supabase env vars (tagged in src/lib/supabase.js).
   if (err?.code === 'ENV_MISSING') {

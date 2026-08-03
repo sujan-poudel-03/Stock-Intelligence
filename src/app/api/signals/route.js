@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
-import { withGuard } from '@/lib/respond';
+import { withGuard, edgeCache } from '@/lib/respond';
 import { normalizeExchange } from '@/lib/exchanges';
 import { exchangeColumnReady } from '@/lib/schemaFlags';
 
@@ -32,7 +32,10 @@ export const GET = withGuard(async (request) => {
 
   const scan = scans?.[0];
   if (!scan) {
-    return NextResponse.json({ scan_id: null, exchange, signals: [], actionable: [] });
+    return NextResponse.json(
+      { scan_id: null, exchange, signals: [], actionable: [] },
+      { headers: edgeCache(15) }
+    );
   }
 
   const { data: rows } = await supabase
@@ -59,12 +62,18 @@ export const GET = withGuard(async (request) => {
 
   const actionable = signals.filter((s) => s.signal === 'BUY' || s.signal === 'SELL');
 
-  return NextResponse.json({
-    scan_id: scan.id,
-    exchange,
-    scan_status: scan.status,
-    scanned_at: scan.completed_at || scan.started_at,
-    signals,
-    actionable,
-  });
+  // Shared across all users of this exchange → edge-cache briefly. A running scan
+  // is cached only 5s (new signals should surface quickly); a finished scan 20s.
+  const ttl = scan.status === 'running' || scan.status === 'pending' ? 5 : 20;
+  return NextResponse.json(
+    {
+      scan_id: scan.id,
+      exchange,
+      scan_status: scan.status,
+      scanned_at: scan.completed_at || scan.started_at,
+      signals,
+      actionable,
+    },
+    { headers: edgeCache(ttl) }
+  );
 });

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { withGuard } from '@/lib/respond';
+import { withGuard, edgeCache } from '@/lib/respond';
 import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 import { validateSources } from '@/lib/marketProviders';
 
@@ -27,5 +27,10 @@ export const GET = withGuard(async () => {
       available,
     };
   });
-  return NextResponse.json({ exchanges, default: DEFAULT_EXCHANGE });
+  // Availability only changes on an env/deploy change (which busts the edge anyway),
+  // so this near-static registry can cache for minutes across all users.
+  return NextResponse.json(
+    { exchanges, default: DEFAULT_EXCHANGE },
+    { headers: edgeCache(300, 900) }
+  );
 });
