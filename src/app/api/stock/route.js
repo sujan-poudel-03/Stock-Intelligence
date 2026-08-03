@@ -3,9 +3,16 @@ import { getSupabase } from '@/lib/supabase';
 import { callLLM, parseJson } from '@/lib/llm';
 import { withGuard } from '@/lib/respond';
 import { remaining } from '@/lib/budget';
+import { getCache, setCache } from '@/lib/cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+// How long the LLM-fetched enrichment (live data + analysis) is shared across users.
+// This is the whole point of the cache: three users opening the same symbol within
+// this window trigger ONE LLM/web fetch, not three. Short enough that an overlay
+// stays reasonably current; the authoritative signal is always read fresh below.
+const STOCK_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // GET /api/stock?symbol=NABIL -> { symbol, data, analysis, signal }
 //
@@ -13,6 +20,11 @@ export const maxDuration = 60;
 // in the browser; V2 does it server-side and folds in the most recent stored
 // signal so the overlay still shows something useful when the daily LLM budget
 // is spent.
+//
+// SHARED-COMPUTE: the expensive LLM/web enrichment is cached per-symbol in kv_store
+// so it is fetched once and served to every user (cost scales with distinct symbols,
+// not user count). The stored SIGNAL is always read fresh from the DB and merged in,
+// so caching the enrichment never staleness-freezes the actionable signal.
 export const GET = withGuard(async (request) => {
   const symbol = (request.nextUrl.searchParams.get('symbol') || '').toUpperCase().trim();
   if (!symbol) return NextResponse.json({ error: 'missing symbol' }, { status: 400 });
@@ -20,7 +32,7 @@ export const GET = withGuard(async (request) => {
   const supabase = getSupabase();
 
   // Most recent stored signal for this symbol (drives the overlay's signal block
-  // and is the fallback when we can't afford a fresh fetch).
+  // and is the fallback when we can't afford a fresh fetch). Always read fresh.
   const { data: sigRows } = await supabase
     .from('signals')
     .select(
@@ -30,6 +42,18 @@ export const GET = withGuard(async (request) => {
     .order('created_at', { ascending: false })
     .limit(1);
   const signal = sigRows?.[0] || null;
+
+  // Shared cache hit: reuse another user's recent enrichment, no LLM spend.
+  const cached = await getCache('stock:' + symbol);
+  if (cached) {
+    return NextResponse.json({
+      symbol,
+      data: cached.data || signal?.live_data || null,
+      analysis: cached.analysis || '',
+      signal,
+      cached: true,
+    });
+  }
 
   // Budget guard: skip the live fetch, fall back to stored data.
   if ((await remaining()) <= 0) {
@@ -69,10 +93,19 @@ export const GET = withGuard(async (request) => {
   });
 
   const parsed = parseJson(text) || {};
+
+  // Cache the enrichment for the next user who opens this symbol. Only cache a real
+  // result (don't poison the cache with an empty parse from a junk/failed response),
+  // and never the signal (read fresh each time). Best-effort — setCache never throws.
+  if (parsed.data || parsed.analysis) {
+    await setCache('stock:' + symbol, { data: parsed.data || null, analysis: parsed.analysis || '' }, STOCK_CACHE_TTL_MS);
+  }
+
   return NextResponse.json({
     symbol,
     data: parsed.data || signal?.live_data || null,
     analysis: parsed.analysis || '',
     signal,
+    cached: false,
   });
 });
