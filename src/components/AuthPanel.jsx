@@ -24,7 +24,7 @@ export default function AuthPanel({ auth }) {
   }
 
   return (
-    <div style={{ ...card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+    <div style={{ ...card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
       <div style={{ fontSize: 10, color: '#4a5568', fontFamily: 'Inter,sans-serif' }}>
         {auth.gateEnabled ? 'Admin features require sign-in.' : 'Sign in to identify yourself.'}
       </div>

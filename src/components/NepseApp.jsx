@@ -8,6 +8,7 @@ import AuthPanel from '@/components/AuthPanel';
 import LoginWall from '@/components/LoginWall';
 import Disclaimer from '@/components/Disclaimer';
 import { useAuth } from '@/lib/useAuth';
+import useBreakpoint from '@/hooks/useBreakpoint';
 import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 
 // ============================================================================
@@ -170,6 +171,8 @@ export default function NepseApp() {
   const [exAvail, setExAvail] = useState({ NEPSE: true });
   const [showOnboard, setShowOnboard] = useState(false);
   const auth = useAuth(); // client view of admin state (server enforces the boundary)
+  const bp = useBreakpoint(); // SSR-safe viewport class; drives structural (not just CSS) responsiveness
+  const isMobile = bp.isMobile;
 
   // Server-backed data
   const [status, setStatus] = useState(null);
@@ -557,7 +560,7 @@ export default function NepseApp() {
 
   // ---------------------------------------------------------------------------
   return (
-    <div style={{ background: '#07090e', minHeight: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'IBM Plex Mono,monospace', color: '#c8d4e8', fontSize: 12 }}>
+    <div className="app-shell" style={{ background: '#07090e', minHeight: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'IBM Plex Mono,monospace', color: '#c8d4e8', fontSize: 12 }}>
 
       {/* toasts */}
       <div style={{ position: 'fixed', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 400, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', alignItems: 'center' }}>
@@ -570,8 +573,8 @@ export default function NepseApp() {
       {/* ONBOARDING — first-run "which market do you trade?" step. Minimal +
           dismissible; sets the stored exchange preference (ni:settings.exchange). */}
       {showOnboard && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: '#04060bdd', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 14, padding: '22px 24px', maxWidth: 460, width: '100%' }}>
+        <div className="modal-overlay" style={{ zIndex: 500, background: '#04060bdd' }}>
+          <div className="modal-panel" style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 14, padding: '22px 24px', maxWidth: 460 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', marginBottom: 4 }}>Which market do you trade?</div>
             <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 16 }}>Pick your exchange — you can change it any time in Settings.</div>
             <div style={{ display: 'grid', gap: 8 }}>
@@ -593,7 +596,7 @@ export default function NepseApp() {
       {/* HEADER */}
       <div style={{ background: '#07090e', borderBottom: '1px solid #141824', padding: '0 16px', flexShrink: 0 }}>
         {/* top bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 44, borderBottom: '1px solid #0f1420' }}>
+        <div className="app-topbar" style={{ display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid #0f1420' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 7, height: 7, borderRadius: '50%', background: running ? '#f59e0b' : '#10b981', animation: running ? '_dot 1s ease infinite' : 'none' }} />
             <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', letterSpacing: '-.01em', fontFamily: 'Inter,sans-serif' }}>{exchange}</span>
@@ -610,7 +613,7 @@ export default function NepseApp() {
               <span style={{ fontSize: 9, color: '#4a5568' }}>{running ? 'scanning ' + (scanPhase || '') + (scanSym ? ' ' + scanSym : '') + '...' : signals.length + ' signals ready'}</span>
             </div>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div className="topbar-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             {running && <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'IBM Plex Mono,monospace' }}>{progressLabel}{status.stalled ? ' (stalled)' : ''}</span>}
             {openPos.length > 0 && <span style={{ fontSize: 10, color: '#4a5568', fontFamily: 'Inter,sans-serif' }}>{openPos.length + ' open'}</span>}
             {realisedPL !== 0 && <span style={{ fontSize: 10, fontWeight: 500, color: realisedPL >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{signed(realisedPL)}</span>}
@@ -619,8 +622,8 @@ export default function NepseApp() {
           </div>
         </div>
         {/* nav bar */}
-        <div style={{ display: 'flex', alignItems: 'center', height: 38 }}>
-          <div style={{ display: 'flex', flex: 1, gap: 0 }}>
+        <div className="app-nav" style={{ display: 'flex', alignItems: 'center' }}>
+          <div className="nav-tabs" style={{ display: 'flex', flex: 1, gap: 0 }}>
             {TABS.map(function (t) {
               var active = tab === t.k;
               return (
@@ -716,7 +719,7 @@ export default function NepseApp() {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
         {/* main content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', minWidth: 0 }}>
+        <div className="app-content" style={{ flex: 1, overflowY: 'auto' }}>
 
           {/* TODAY */}
           {tab === 'today' && (
@@ -783,7 +786,7 @@ export default function NepseApp() {
 
               {/* market movers */}
               {market && (market.gainers || []).length > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <div style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 8, padding: '10px 12px' }}>
                     <div style={{ fontSize: 9, color: '#10b981', letterSpacing: '.08em', marginBottom: 6 }}>GAINERS</div>
                     {(market.gainers || []).slice(0, 4).map(function (g, i) {
@@ -818,7 +821,7 @@ export default function NepseApp() {
                       {s.source === 'discovered' && <span style={{ fontSize: 8, color: '#a78bfa', background: '#a78bfa18', padding: '1px 5px', borderRadius: 2 }}>discovered</span>}
                     </div>
                     <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginBottom: 8 }}>
+                    <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginBottom: 8 }}>
                       {sbox('entry', s.entry)}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981')}
                     </div>
                     {s.action && <div style={{ fontSize: 11, color: '#3b82f6', marginBottom: 8, fontFamily: 'IBM Plex Sans,sans-serif' }}>-&gt; {s.action}</div>}
@@ -847,7 +850,7 @@ export default function NepseApp() {
           {tab === 'positions' && (
             <div>
               {openPos.length > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
+                <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
                   {[['open', '' + openPos.length, null], ['deployed', toRs(openPos.reduce(function (s, p) { return s + p.net; }, 0)), null], ['realised', signed(realisedPL), realisedPL >= 0 ? '#10b981' : '#ef4444'], ['win %', closedSells.length ? Math.round(closedSells.filter(function (t) { return (t.npl || 0) > 0; }).length / closedSells.length * 100) + '%' : '-', '#3b82f6']].map(function (item) {
                     return <div key={item[0]} style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 6, padding: '8px 10px' }}><div style={{ fontSize: 9, color: '#4a5568', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3 }}>{item[0]}</div><div style={{ fontSize: 16, fontWeight: 600, color: item[2] || '#e2e8f0' }}>{item[1]}</div></div>;
                   })}
@@ -871,14 +874,14 @@ export default function NepseApp() {
                       {unr !== null && <span style={{ fontSize: 10, color: unr >= 0 ? '#10b981' : '#ef4444' }}>{(unr >= 0 ? '+' : '') + toRs(unr)}</span>}
                       <span style={{ marginLeft: 'auto', fontSize: 9, color: '#4a5568' }}>{'day ' + daysAgo(p.date)}</span>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5, marginBottom: 8 }}>
+                    <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5, marginBottom: 8 }}>
                       {sbox('invested', toRs(p.net))}{sbox('break-even', p.be ? 'Rs ' + p.be.toFixed(0) : '-')}{sbox('stop loss', p.sl ? 'Rs ' + p.sl : 'NOT SET', noSL ? '#ef4444' : null)}{sbox('target', p.target ? 'Rs ' + p.target : '-', p.target ? '#10b981' : null)}
                     </div>
                     {p.basis && <div style={{ fontSize: 10, color: '#1c2333', fontStyle: 'italic', marginBottom: 6 }}>{'"' + p.basis + '"'}</div>}
                     {noSL && <div style={{ fontSize: 10, color: '#ef4444', marginBottom: 6 }}>no stop-loss set</div>}
                     {sellTarget === p.id ? (
                       <div style={{ background: '#080a0f', borderRadius: 6, padding: 10, border: '1px solid #1c2333' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                           <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>sell price <span style={{ color: '#ef4444' }}>*</span></div><input value={sellPrice} onChange={function (e) { setSellPrice(e.target.value); }} type="number" placeholder={lp ? String(lp) : 'current'} /></div>
                           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                             {sellPrice && <div style={{ fontSize: 10, color: '#4a5568' }}>net: <span style={{ color: calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>{signed(calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl)}</span></div>}
@@ -951,7 +954,7 @@ export default function NepseApp() {
                       </div>
                     )}
                     <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5, marginBottom: 8 }}>
+                    <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5, marginBottom: 8 }}>
                       {sbox('entry', s.entry)}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981')}{sbox('hold', s.hold)}
                     </div>
                     {s.risk && <div style={{ fontSize: 10, color: '#f59e0b', marginBottom: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{'risk: ' + s.risk}</div>}
@@ -1136,7 +1139,7 @@ export default function NepseApp() {
                     <div style={{ fontSize: 10, color: '#4a5568' }}>Which market are you trading</div>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {Object.keys(EXCHANGES).map(function (exId) {
                     var ex = EXCHANGES[exId]; var active = exchange === exId;
                     // Availability is server-gated (e.g. NYSE behind ENABLE_NYSE);
@@ -1252,7 +1255,7 @@ export default function NepseApp() {
               {/* Scan profile summary */}
               <div style={{ background: 'linear-gradient(135deg,#0b0e16 0%,#0d1220 100%)', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px' }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', marginBottom: 12 }}>Current scan profile</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 14 }}>
+                <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 14 }}>
                   {[['Watchlist stocks', watchlist.length, '#c8d4e8'], ['+ Discovered', settings.discovery_depth, '#a78bfa'], ['Total scanned', watchlist.length + settings.discovery_depth, '#10b981']].map(function (item) {
                     return (
                       <div key={item[0]} style={{ background: '#07090e', borderRadius: 8, padding: '10px 12px', border: '1px solid #141824' }}>
@@ -1272,7 +1275,9 @@ export default function NepseApp() {
 
         {/* ASK SIDEBAR */}
         {sidebarOpen && (
-          <div style={{ width: 300, borderLeft: '1px solid #141824', display: 'flex', flexDirection: 'column', background: '#07090e', flexShrink: 0 }}>
+          <div style={isMobile
+            ? { position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', background: '#07090e', paddingBottom: 'env(safe-area-inset-bottom)' }
+            : { width: 300, borderLeft: '1px solid #141824', display: 'flex', flexDirection: 'column', background: '#07090e', flexShrink: 0 }}>
             <div style={{ padding: '12px 14px', borderBottom: '1px solid #141824', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#3b82f6' }} />
@@ -1337,7 +1342,7 @@ export default function NepseApp() {
                   <span style={{ fontSize: 12, color: ovData.change_pct >= 0 ? '#10b981' : '#ef4444' }}>{toPct(ovData.change_pct)}</span>
                   <span style={{ fontSize: 8, color: '#10b981', background: '#10b98118', padding: '1px 5px', borderRadius: 2, marginLeft: 'auto' }}>LIVE - merolagani.com</span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginBottom: 10 }}>
+                <div className="metrics-tight" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginBottom: 10 }}>
                   {[['52w H', 'Rs ' + ovData.week52_high], ['52w L', 'Rs ' + ovData.week52_low], ['120d', 'Rs ' + ovData.avg120], ['EPS', '' + ovData.eps], ['P/E', '' + ovData.pe], ['BV', 'Rs ' + ovData.bv], ['PBV', '' + ovData.pbv], ['Div', ovData.div_pct + '%'], ['Yield', ovData.yield + '%'], ['Vol', '' + ovData.volume]].map(function (item) { return <div key={item[0]} style={{ background: '#080a0f', borderRadius: 4, padding: '4px 7px' }}><div style={{ fontSize: 8, color: '#1c2333', marginBottom: 2 }}>{item[0]}</div><div style={{ fontSize: 11, fontWeight: 500, color: '#c8d4e8' }}>{item[1] || '-'}</div></div>; })}
                 </div>
                 {ovData.week52_low && ovData.week52_high && (function () {
@@ -1352,7 +1357,7 @@ export default function NepseApp() {
             {ovAnalysis ? <div style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 8, padding: '12px 14px', marginBottom: 10, lineHeight: 1.8, fontSize: 12, color: '#8899b4', whiteSpace: 'pre-wrap', fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovAnalysis}</div> : ovLoading && <div style={card()}>{ghost()}{ghost()}{ghost()}{ghost()}</div>}
             {ovSig && (
               <div style={card(SIG_COLORS[ovSig.signal] || '#4a5568')}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginBottom: 8 }}>
+                <div className="metrics-tight" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginBottom: 8 }}>
                   {sbox('signal', ovSig.signal, SIG_COLORS[ovSig.signal])}{sbox('conf', ovSig.confidence, ovSig.confidence === 'HIGH' ? '#10b981' : ovSig.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568')}{sbox('entry', ovSig.entry || '-')}{sbox('stop loss', ovSig.sl ? 'Rs ' + ovSig.sl : '-', '#ef4444')}{sbox('target', ovSig.target ? 'Rs ' + ovSig.target : '-', '#10b981')}
                 </div>
                 {ovSig.why && <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovSig.why}</div>}
@@ -1372,7 +1377,7 @@ function BuyForm(props) {
   var s = props.s;
   return (
     <div style={{ background: '#080a0f', borderRadius: 6, padding: 10, border: '1px solid #1c2333' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+      <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
         <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>quantity</div><input value={props.buyQty} onChange={function (e) { props.setBuyQty(e.target.value); }} type="number" placeholder="units" /></div>
         <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>stop loss</div><input value={props.buySL} onChange={function (e) { props.setBuySL(e.target.value); }} type="number" placeholder={s.sl ? 'Rs ' + s.sl : ''} /></div>
       </div>

@@ -10,6 +10,15 @@
   --green: #10b981;
   --red: #ef4444;
   --amber: #f59e0b;
+  /* Fluid type scale (responsive layer). Mobile floors keep structural text
+     legible on a phone; desktop ceilings match the inline sizes already in use.
+     Existing inline font-sizes are intentionally left untouched. */
+  --fs-xs: clamp(9px, 0.4vw + 8px, 10px);
+  --fs-sm: clamp(10px, 0.5vw + 9px, 11px);
+  --fs-base: clamp(12px, 0.4vw + 11px, 13px);
+  --fs-lg: clamp(14px, 0.8vw + 12px, 15px);
+  --fs-xl: clamp(16px, 1.6vw + 13px, 22px);
+  --tap: 44px; /* minimum comfortable touch target */
 }
 
 * {
@@ -24,6 +33,10 @@ body {
   color: var(--text);
   font-family: 'IBM Plex Mono', monospace;
   -webkit-font-smoothing: antialiased;
+  /* Never allow sideways scroll (responsive layer). Wide inner content opts into
+     its own scroll via .hscroll rather than pushing the page wider than 100%. */
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 a {
@@ -101,4 +114,187 @@ button {
 
 .fadeup {
   animation: _fadeup 0.2s ease forwards;
+}
+
+/* ==========================================================================
+   RESPONSIVE LAYER (additive)
+   --------------------------------------------------------------------------
+   Everything above is the original desktop "terminal" styling and MUST NOT
+   change. Below is a mobile-first layer wired onto new className'd containers
+   in NepseApp + the smaller components. Inline styles can't be hit by media
+   queries, so structural container styles moved to these classes; cosmetic
+   inline styles (colours, borders, small paddings) stay inline.
+
+   Breakpoints (kept in sync with src/hooks/useBreakpoint.js):
+     mobile  < 640px · tablet 640–1024px · desktop > 1024px
+   ========================================================================== */
+
+/* App shell — full-height flex column, honouring the notch/home-indicator via
+   safe-area insets (viewportFit=cover is set in layout.js). The visual styles
+   (bg/font/colour) remain inline on the element so desktop is unchanged. */
+.app-shell {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Header top bar — one row on desktop; wraps to multiple rows on small screens
+   instead of overflowing. min-height replaces the fixed 44px height so it can
+   grow when it wraps; on desktop the content fits one row and it looks the same. */
+.app-topbar {
+  min-height: 44px;
+}
+@media (max-width: 639px) {
+  .app-topbar {
+    flex-wrap: wrap;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  /* Let the scan/activity cluster take a full row rather than being squeezed. */
+  .app-topbar > .topbar-actions {
+    margin-left: auto;
+  }
+}
+
+/* Nav / tabs — horizontally scrollable strip on small screens with momentum
+   scroll and hidden scrollbar; each tab keeps a comfortable tap height. */
+.app-nav {
+  min-height: 38px;
+}
+.app-nav .nav-tabs {
+  min-width: 0;
+}
+@media (max-width: 639px) {
+  .app-nav .nav-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .app-nav .nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  /* Comfortable touch targets for the primary nav. A stylesheet min-height wins
+     over the inline height:38/34 the tab/gear/Ask buttons carry, so no inline
+     edit is needed and desktop (this rule is mobile-only) is untouched. */
+  .app-nav button {
+    min-height: var(--tap);
+  }
+}
+
+/* Generic responsive card grid — collapses to a single column on phones and
+   fills 2–3 columns as space allows above that. */
+.card-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+@media (max-width: 639px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Main region: content beside the Ask sidebar on desktop. The sidebar itself is
+   switched to a full-screen sheet in JS (useBreakpoint) on mobile, so here we
+   only need to keep the content scrollable and gutter-friendly. */
+.app-content {
+  min-width: 0;
+  padding: 14px 16px;
+}
+@media (max-width: 639px) {
+  .app-content {
+    padding: 10px 12px;
+  }
+}
+
+/* Two-up / side-by-side blocks that should stack on phones. */
+@media (max-width: 639px) {
+  .stack-sm {
+    flex-direction: column;
+  }
+}
+
+/* Modal / sheet: a centred dialog on desktop, a full-screen bottom sheet on
+   phones (slides up, rounded top, pinned to the bottom, safe-area aware). */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+}
+.modal-panel {
+  width: 100%;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+@media (max-width: 639px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-panel {
+    max-width: 100% !important;
+    max-height: 92vh;
+    border-radius: 14px 14px 0 0;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    animation: _sheetup 0.22s ease forwards;
+  }
+}
+@keyframes _sheetup {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Minimum tap target for touch — apply to icon-only / compact buttons whose
+   styled size would otherwise be under ~44px on a phone. */
+@media (max-width: 639px) {
+  .tap-target {
+    min-height: var(--tap);
+    min-width: var(--tap);
+  }
+}
+
+/* Opt-in horizontal-scroll wrapper for genuinely wide inner content (wide
+   metric grids, tables) so it scrolls locally instead of widening the page. */
+.hscroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Dense metric grids (the 5-up stat rows in the stock overlay) are too tight to
+   read on a phone. Collapse them to 3 columns below 640 so cells stay legible
+   and never force the page wider. Desktop keeps its inline column count. */
+@media (max-width: 639px) {
+  .metrics-tight {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+}
+
+/* Fixed multi-column stat / mover grids clip on phones: a grid `1fr` track can't
+   shrink below its content's min-width, so long "Rs …" values push the row past a
+   360px viewport (the gainers/losers block loses its second column). Below 640:
+   movers + 2-up blocks stack to one column; dense 3/4-up stat rows drop to two.
+   `min-width:0` lets a cell shrink instead of forcing the row wider. Desktop keeps
+   its inline column count (these rules are mobile-only). */
+@media (max-width: 639px) {
+  .grid-stack-sm {
+    grid-template-columns: 1fr !important;
+  }
+  .grid-2-sm {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .grid-stack-sm > *,
+  .grid-2-sm > * {
+    min-width: 0;
+  }
 }

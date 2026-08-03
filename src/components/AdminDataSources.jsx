@@ -127,7 +127,7 @@ export default function AdminDataSources() {
             </div>
           )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14, flexWrap: 'wrap' }}>
             <button
               onClick={save}
               disabled={saving || active.length === 0}
