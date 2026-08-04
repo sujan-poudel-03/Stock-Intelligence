@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery } from '@/lib/scan';
 import { normalizeExchange } from '@/lib/exchanges';
 import { exchangeColumnReady } from '@/lib/schemaFlags';
@@ -26,7 +26,11 @@ async function handle(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  const supabase = getSupabase();
+  // Trusted cron write path: use the service-role client so the scan-row + jobs
+  // writes keep working once RLS is turned on (Phase 2). This file has no public
+  // reads, so a single service client covers its reads and writes. RLS is still
+  // OFF today, so this is behaviour-preserving.
+  const supabase = getServiceSupabase();
 
   // Scan mode. 'light' (intraday) keeps cost low for high-frequency market-hours
   // runs: it scans only the watchlist, skips discovery, and reuses the most recent

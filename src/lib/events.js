@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase.js';
+import { getSupabase, getServiceSupabase } from './supabase.js';
 
 // Durable activity log. Every notable pipeline step (scan started, stock scanned,
 // signal generated, symbol promoted, outcome resolved) is written to the `events`
@@ -24,7 +24,11 @@ export async function logEvent(supabaseOrEvent, maybeEvent) {
   if (!type) return;
 
   try {
-    const client = supabase || getSupabase();
+    // Writes go through the service-role client so activity logging keeps working
+    // once RLS is on (Phase 2). Callers in the cron pipeline already pass their
+    // service client; the no-client form resolves one here. Still best-effort —
+    // getServiceSupabase() throwing (key unset) is swallowed by the surrounding try.
+    const client = supabase || getServiceSupabase();
     await client.from('events').insert({
       scan_id: scanId,
       type,

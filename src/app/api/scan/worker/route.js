@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
 import { scanOneStock, deterministicSignal } from '@/lib/scan';
 import { getVerifiedPrice } from '@/lib/marketProviders';
 import { getWeightContext } from '@/lib/calibration';
@@ -25,7 +25,10 @@ export const POST = withGuard(async (request) => {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  const supabase = getSupabase();
+  // Trusted cron write path: service-role client so job claims, signal inserts,
+  // and counter bumps survive RLS being enabled later (Phase 2). No public reads
+  // live in this file; behaviour is unchanged while RLS is still OFF.
+  const supabase = getServiceSupabase();
   const symbol = request.nextUrl.searchParams.get('symbol');
   const force = request.nextUrl.searchParams.get('force') === 'true';
 

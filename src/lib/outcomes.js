@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase.js';
+import { getServiceSupabase } from './supabase.js';
 import { getVerifiedPrice } from './marketProviders.js';
 import { updateWeights } from './calibration.js';
 import { recordOutcomeKnowledge } from './knowledge.js';
@@ -16,7 +16,10 @@ function priceKey(symbol, exchange) {
 // it to WIN (price >= target) or LOSS (price <= sl). Updates the signals row,
 // writes an outcomes row, bumps calibration weights, and emails an alert.
 export async function checkOutcomes() {
-  const supabase = getSupabase();
+  // Trusted resolution loop (cron-driven): service-role client so the signal
+  // updates + outcomes inserts survive RLS being enabled later (Phase 2). The
+  // pending-signals read is also trusted here. Behaviour-preserving while RLS is OFF.
+  const supabase = getServiceSupabase();
 
   const { data: pending, error } = await supabase
     .from('signals')
@@ -78,7 +81,7 @@ export async function checkOutcomes() {
     // Update calibration (statistical) + knowledge base (qualitative lessons),
     // scoped to the signal's exchange so NYSE learns from its own outcomes.
     await updateWeights(sig.symbol, sig.sector, sig.signal, outcome, returnPct, exchange);
-    await recordOutcomeKnowledge(supabase, sig, outcome, price, returnPct);
+    await recordOutcomeKnowledge(sig, outcome, price, returnPct);
 
     // Alert.
     await sendAlert(

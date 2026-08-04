@@ -1,4 +1,4 @@
-import { getSupabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery, scanOneStock, runBrief } from '@/lib/scan';
 import { getWeightContext } from '@/lib/calibration';
 import { checkOutcomes } from '@/lib/outcomes';
@@ -23,7 +23,12 @@ export async function GET() {
   const stream = new ReadableStream({
     async start(controller) {
       const emit = (obj) => controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
-      const supabase = getSupabase();
+      // Dev-only full-chain harness (403 in production). It inlines the same scans/
+      // signals/kv_store WRITES as the real cron chain, so it uses the service-role
+      // client too — this is what exercises the service-client write path in the
+      // local `curl /api/scan/dev-run` verification. Requires SUPABASE_SERVICE_ROLE_KEY
+      // in .env.local. (Not in the architect's literal file list — see step-2 report.)
+      const supabase = getServiceSupabase();
 
       let scanId = null;
       let failed = 0;
