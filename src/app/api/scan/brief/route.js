@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
 import { runBrief } from '@/lib/scan';
 import { checkOutcomes } from '@/lib/outcomes';
 import { runBackground } from '@/lib/background';
@@ -14,7 +14,10 @@ export const maxDuration = 60;
 
 // POST /api/scan/brief  { scan_id }
 export const POST = withGuard(async (request) => {
-  const supabase = getSupabase();
+  // Trusted cron write path: service-role client so the brief/scan-row updates,
+  // kv_store brief, and watchlist promotion writes survive RLS later (Phase 2).
+  // No public reads in this file; behaviour is unchanged while RLS is still OFF.
+  const supabase = getServiceSupabase();
 
   let body = {};
   try {

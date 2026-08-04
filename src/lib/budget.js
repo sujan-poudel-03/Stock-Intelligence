@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase.js';
+import { getSupabase, getServiceSupabase } from './supabase.js';
 
 // Daily LLM call budget — fits the scan inside a free-tier quota by spending a
 // known number of requests per day and SKIPPING (never crashing) once spent.
@@ -54,10 +54,13 @@ export async function remaining() {
   }
 }
 
-// Record n consumed calls (best-effort).
+// Record n consumed calls (best-effort). The usage WRITE goes through the
+// service-role client so budget tracking survives RLS later (Phase 2); still
+// best-effort, so a service-client failure (key unset) is swallowed. `remaining()`
+// stays on the anon client — it's a public read served on the health/stock surface.
 export async function spend(n = 1) {
   try {
-    const supabase = getSupabase();
+    const supabase = getServiceSupabase();
     const { used } = await read(supabase);
     await write(supabase, used + n);
   } catch {
@@ -69,7 +72,7 @@ export async function spend(n = 1) {
 // quota error so the rest of the scan skips instead of hammering the API.
 export async function exhaust() {
   try {
-    const supabase = getSupabase();
+    const supabase = getServiceSupabase();
     await write(supabase, dailyBudget());
   } catch {
     /* best-effort */

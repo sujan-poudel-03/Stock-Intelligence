@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase.js';
+import { getSupabase, getServiceSupabase } from './supabase.js';
 import { wilsonLowerBound, decayedCounts } from './stats.js';
 import { scopeKey, DEFAULT_EXCHANGE } from './exchanges.js';
 
@@ -21,53 +21,63 @@ function rate(wins, losses) {
 
 async function bump(key, outcome, returnPct) {
   if (!key) return;
-  const supabase = getSupabase();
 
-  const { data: existing } = await supabase
-    .from('weights')
-    .select('*')
-    .eq('key', key)
-    .maybeSingle();
-
-  const prevWins = existing?.wins || 0;
-  const prevLosses = existing?.losses || 0;
-  const prevAvg = Number(existing?.avg_return || 0);
-  const prevTotal = prevWins + prevLosses;
-
-  const isWin = outcome === 'WIN';
-  const wins = prevWins + (isWin ? 1 : 0);
-  const losses = prevLosses + (isWin ? 0 : 1);
-
-  const ret = Number.isFinite(returnPct) ? Number(returnPct) : 0;
-  const newTotal = prevTotal + 1;
-  const avgReturn = (prevAvg * prevTotal + ret) / newTotal;
-
-  await supabase.from('weights').upsert(
-    {
-      key,
-      wins,
-      losses,
-      rate: rate(wins, losses),
-      avg_return: avgReturn,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'key' }
-  );
-
-  // Best-effort time-decay update (P1.5-3b). A not-yet-migrated DB (no dwins/
-  // dlosses/last_outcome_at columns) just no-ops here — the update returns an
-  // error rather than throwing, and the try guards any unexpected throw — so core
-  // calibration keeps working whether or not the migration has been applied.
+  // Calibration accrual is a best-effort side-channel: it must never throw into the
+  // outcome-resolution loop (CLAUDE.md guardrail). Writes go through the service-role
+  // client so they survive RLS being enabled later (Phase 2); the whole body is
+  // wrapped so a service-client failure (e.g. key unset) is swallowed rather than
+  // aborting the loop — matching the never-throw contract the anon path relied on.
   try {
-    const now = Date.now();
-    const ageMs = existing?.last_outcome_at ? now - new Date(existing.last_outcome_at).getTime() : 0;
-    const { dwins, dlosses } = decayedCounts(existing, isWin, ageMs, DECAY_HALF_LIFE_MS);
-    await supabase
+    const supabase = getServiceSupabase();
+
+    const { data: existing } = await supabase
       .from('weights')
-      .update({ dwins, dlosses, last_outcome_at: new Date(now).toISOString() })
-      .eq('key', key);
+      .select('*')
+      .eq('key', key)
+      .maybeSingle();
+
+    const prevWins = existing?.wins || 0;
+    const prevLosses = existing?.losses || 0;
+    const prevAvg = Number(existing?.avg_return || 0);
+    const prevTotal = prevWins + prevLosses;
+
+    const isWin = outcome === 'WIN';
+    const wins = prevWins + (isWin ? 1 : 0);
+    const losses = prevLosses + (isWin ? 0 : 1);
+
+    const ret = Number.isFinite(returnPct) ? Number(returnPct) : 0;
+    const newTotal = prevTotal + 1;
+    const avgReturn = (prevAvg * prevTotal + ret) / newTotal;
+
+    await supabase.from('weights').upsert(
+      {
+        key,
+        wins,
+        losses,
+        rate: rate(wins, losses),
+        avg_return: avgReturn,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'key' }
+    );
+
+    // Best-effort time-decay update (P1.5-3b). A not-yet-migrated DB (no dwins/
+    // dlosses/last_outcome_at columns) just no-ops here — the update returns an
+    // error rather than throwing, and the try guards any unexpected throw — so core
+    // calibration keeps working whether or not the migration has been applied.
+    try {
+      const now = Date.now();
+      const ageMs = existing?.last_outcome_at ? now - new Date(existing.last_outcome_at).getTime() : 0;
+      const { dwins, dlosses } = decayedCounts(existing, isWin, ageMs, DECAY_HALF_LIFE_MS);
+      await supabase
+        .from('weights')
+        .update({ dwins, dlosses, last_outcome_at: new Date(now).toISOString() })
+        .eq('key', key);
+    } catch {
+      /* decay columns not migrated yet — skip */
+    }
   } catch {
-    /* decay columns not migrated yet — skip */
+    /* best-effort: calibration accrual must never throw into the outcome loop */
   }
 }
 

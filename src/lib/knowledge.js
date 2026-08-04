@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase.js';
+import { getSupabase, getServiceSupabase } from './supabase.js';
 import { scopeKey, DEFAULT_EXCHANGE } from './exchanges.js';
 
 // Qualitative knowledge base. The statistical `weights` table answers "how often
@@ -50,12 +50,16 @@ async function appendNote(supabase, { kind, key, line }) {
 }
 
 /**
- * recordOutcomeKnowledge(supabase, sig, outcome, exitPrice, returnPct)
+ * recordOutcomeKnowledge(sig, outcome, exitPrice, returnPct)
  * Turns one resolved signal into a durable, human-readable lesson line stored on
  * the symbol and sector notes. Best-effort: never throws into the outcome loop.
+ * Resolves the service-role client internally (this is a write path, and it must
+ * keep working once RLS is on — Phase 2); getServiceSupabase() throwing when the
+ * key is unset is swallowed by the surrounding try.
  */
-export async function recordOutcomeKnowledge(supabase, sig, outcome, exitPrice, returnPct) {
+export async function recordOutcomeKnowledge(sig, outcome, exitPrice, returnPct) {
   try {
+    const supabase = getServiceSupabase();
     const exchange = sig.exchange || DEFAULT_EXCHANGE;
     const date = new Date().toISOString().slice(0, 10);
     const ret = Number.isFinite(returnPct) ? `${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%` : 'n/a';
