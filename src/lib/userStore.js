@@ -190,6 +190,32 @@ export async function savePersonalSettings(mode, prefs) {
   if (mode === 'local') lsSet(LS_SETTINGS, prefs);
 }
 
+// ---- per-user alert preferences ---------------------------------------------
+// Which channels notify ME + which signal directions trigger it. Owner-scoped via
+// /api/alerts (bearer token attached); local mode mirrors it in localStorage so the
+// single-operator open mode still persists a choice.
+const LS_ALERTS = 'ni:u:alerts';
+const EMPTY_ALERTS = { channels: {}, thresholds: {} };
+
+export async function loadAlertPrefs(mode) {
+  if (mode === 'api') {
+    const res = await api('/api/alerts');
+    if (!res.ok) return { ...EMPTY_ALERTS };
+    const d = await res.json();
+    return { channels: d.channels || {}, thresholds: d.thresholds || {} };
+  }
+  if (mode === 'local') return lsGet(LS_ALERTS, { ...EMPTY_ALERTS });
+  return { ...EMPTY_ALERTS };
+}
+
+export async function saveAlertPrefs(mode, prefs) {
+  if (mode === 'api') {
+    await api('/api/alerts', { method: 'PUT', body: prefs });
+    return;
+  }
+  if (mode === 'local') lsSet(LS_ALERTS, prefs);
+}
+
 // ---- global agent/discovery config (admin) ----------------------------------
 // Open read (the UI shows discovery depth to everyone); admin-gated write.
 export async function loadGlobalSettings() {

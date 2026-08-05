@@ -154,24 +154,47 @@ check that catches RLS lockout; `build` cannot).
 
 ---
 
-## Access scopes — THREE tiers (authoritative gating spec)
+## Access scopes — FOUR tiers (authoritative gating spec)
 
 **DECIDED (owner, 2026-08-05): Option A — segregate public vs gated.** Public viewing
 stays on (marketing funnel); actions require login. Not a hard wall.
 
-| Tier | Who | Can do | Enforcement |
+A **scan is a global SYSTEM job**, not a user or (in-app) admin action — it's
+triggered only by the scheduler via `CRON_SECRET` and serves everyone (one scan →
+shared signals). Admins can *request* a manual scan from the UI, which is proxied
+server-side through the admin gate; they never hold the cron secret.
+
+| Surface / Action | Scope | Enforcement | Endpoint |
 |---|---|---|---|
-| **Public** (no login) | anyone | **View only:** Today/brief, Signals, Track Record, movers, stock-detail overlay, switch exchange to view | Shared tables, RLS anon **read-only** |
-| **User** (Google login) | any signed-in user | Manage **their own**: watchlist, portfolio/positions, alert prefs, personal view prefs | Per-user tables, RLS `auth.uid() = user_id` |
-| **Admin** (`ADMIN_EMAILS`) | operator | System config: data sources, scan control, **discovery settings** (depth, sector focus, auto-discovery/remove), notification channels, budget/schedule, shadow-B | Server-enforced on `/api/admin/*` (already built) |
+| View Today / signals / brief | **Public**¹ | anon read + RLS public-read | `/api/signals` |
+| View Track Record | **Public**¹ | anon read | `/api/track-record` |
+| View stock detail overlay | **Public**¹ | anon + shared cache | `/api/stock` |
+| Switch exchange (view) | **Public**¹ | client + `/api/exchanges` | `/api/exchanges` |
+| **Run / trigger a scan** | **System (cron)** | `CRON_SECRET` (`checkCronAuth`) | `/api/cron/scan`, `/api/scan/worker` |
+| Admin "scan now" (manual) | **Admin** → System | `requireAdmin`, then server-side cron trigger | `/api/admin/scan` |
+| My watchlist (add/remove) | **Tenant** | token + RLS owner-only | `/api/watchlist` |
+| My portfolio / positions | **Tenant** | token + RLS owner-only | `/api/portfolio` |
+| My personal settings | **Tenant** | token + RLS owner-only | `/api/settings` |
+| My alert prefs | **Tenant** | token + RLS owner-only | `/api/alerts` |
+| Ask / chat | **Tenant** | token + per-user daily quota | `/api/chat` |
+| Data-source selection | **Admin** | `requireAdmin` | `/api/admin/sources` |
+| Discovery/agent config (depth, sector, auto-add/remove) | **Admin** | `requireAdmin` | `/api/admin/settings` |
+| Notification channels | **Admin** | `requireAdmin` | `/api/admin/channels` |
+| Scan schedule / budget / cron secret | **System/Operator** | env + GitHub Actions | — |
+| Shadow-B scoreboard | **Admin (internal)** | not surfaced | — |
+
+¹ Public = when the login wall is OFF (Option A). With `NEXT_PUBLIC_REQUIRE_LOGIN=true`
+these need sign-in but stay *"any signed-in user"* (shared, not tenant-specific).
 
 **Scoping subtleties (get these right):**
-- **Agent/discovery settings are ADMIN, not User** — they shape the ONE global scan
-  that serves everyone; there is no per-user discovery depth. Today they render for
-  everyone (single-tenant open mode); Phase 2 moves them behind the admin gate.
+- **Scans are system-scoped, not user/admin-in-app** — the trigger needs the cron
+  secret the browser never holds. The in-app "scan now" button is **admin-only** and
+  proxied through `/api/admin/scan` (which injects the secret server-side); tenants/
+  public never see it.
+- **Agent/discovery settings are ADMIN, not User** — they shape the ONE global scan;
+  there is no per-user discovery depth.
 - **Watchlist is dual-natured** — per-user (your list/view) AND its union feeds the
-  global scan universe. Per-user data over shared compute; a symbol on 10 watchlists
-  is still scanned once.
+  global scan universe. A symbol on 10 watchlists is still scanned once.
 
 ## UI/UX requirements for the gates (first-class, not a follow-up)
 

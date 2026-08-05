@@ -222,6 +222,7 @@ export default function NepseApp() {
   const [watchlist, setWatchlist] = useState([]);
   const [wlSources, setWlSources] = useState({}); // { SYMBOL: 'manual'|'discovered'|'holding' }
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [alertPrefs, setAlertPrefs] = useState({ channels: {}, thresholds: {} }); // per-user alert prefs
 
   // Chat
   const [chat, setChat] = useState([]);
@@ -306,6 +307,21 @@ export default function NepseApp() {
   // Global agent/discovery config — ADMIN-only write (server-enforced on
   // /api/admin/settings). Only reachable from admin-gated panels.
   function saveSettings(updated) { setSettings(updated); store.saveGlobalSettings(updated); }
+
+  // Per-user alert prefs (owner-scoped /api/alerts). Optimistic local update + a
+  // best-effort persist; a save failure surfaces a toast but doesn't roll back the UI.
+  function saveAlerts(next) {
+    setAlertPrefs(next);
+    store.saveAlertPrefs(currentMode(), next).catch(function () { showToast('Could not save alert prefs', 'err'); });
+  }
+  function toggleAlertChannel(key) {
+    var ch = Object.assign({}, alertPrefs.channels); ch[key] = !ch[key];
+    saveAlerts(Object.assign({}, alertPrefs, { channels: ch }));
+  }
+  function toggleAlertThreshold(key) {
+    var th = Object.assign({}, alertPrefs.thresholds); th[key] = !th[key];
+    saveAlerts(Object.assign({}, alertPrefs, { thresholds: th }));
+  }
 
   // Exchange is a personal VIEW preference: always device-local (so logged-out
   // visitors can switch markets to view) and additionally synced to the user's row
@@ -514,13 +530,41 @@ export default function NepseApp() {
     if (tab === 'track' && !track) loadTrack();
   }, [tab, track, loadTrack]);
 
+  // Load the user's own alert prefs when they open Settings (per-user; skipped when
+  // signed out and auth is configured — the section shows a sign-in prompt instead).
+  useEffect(() => {
+    if (tab !== 'settings') return;
+    if (currentMode() === 'gated') return;
+    let alive = true;
+    store.loadAlertPrefs(currentMode())
+      .then(function (p) { if (alive) setAlertPrefs(p); })
+      .catch(function () {});
+    return function () { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, auth.loading, auth.configured, auth.signedIn]);
+
   // -- actions ----------------------------------------------------------------
+  // A scan is a SYSTEM/admin action: post to the admin-gated /api/admin/scan (which
+  // re-triggers the CRON_SECRET-guarded cron/scan server-side) with the admin bearer
+  // token — never straight to /api/cron/scan (the browser has no CRON_SECRET, so that
+  // would 401 for everyone). The button itself is admin-only in the UI, but the 403
+  // path is handled anyway so the boundary is honest.
   const scanNow = useCallback(async () => {
     if (running || scanStarting) return;
     setScanStarting(true);
     addLog('scan requested', 'info');
     try {
-      const res = await fetch('/api/cron/scan?exchange=' + encodeURIComponent(exchange), { method: 'POST' });
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/scan', {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
+        body: JSON.stringify({ exchange: exchange, mode: 'full' }),
+      });
+      if (res.status === 403) {
+        addLog('scan is admin only', 'err');
+        showToast('Admin only', 'err');
+        return;
+      }
       const data = await res.json();
       if (data.skipped) addLog('scan already in progress', 'info');
       else if (data.started) addLog('scan started — ' + data.total + ' stocks (' + (data.sentiment || 'NEUTRAL') + ')', 'ok');
@@ -531,7 +575,7 @@ export default function NepseApp() {
     } finally {
       setScanStarting(false);
     }
-  }, [running, scanStarting, addLog, startPolling, exchange]);
+  }, [running, scanStarting, addLog, startPolling, showToast, exchange]);
 
   const retryStock = useCallback(async (symbol) => {
     addLog('retrying ' + symbol + '…', 'api');
@@ -722,7 +766,11 @@ export default function NepseApp() {
             {running && <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'IBM Plex Mono,monospace' }}>{progressLabel}{status.stalled ? ' (stalled)' : ''}</span>}
             {openPos.length > 0 && <span style={{ fontSize: 10, color: '#4a5568', fontFamily: 'Inter,sans-serif' }}>{openPos.length + ' open'}</span>}
             {realisedPL !== 0 && <span style={{ fontSize: 10, fontWeight: 500, color: realisedPL >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{signed(realisedPL)}</span>}
-            <button onClick={scanNow} disabled={running || scanStarting} style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid ' + (running ? '#1e2840' : '#3b82f6'), background: running ? 'transparent' : '#3b82f615', color: running ? '#4a5568' : '#3b82f6', fontSize: 10, cursor: running ? 'default' : 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{running ? 'scanning…' : scanStarting ? 'starting…' : 'scan'}</button>
+            {/* Scan is an admin/system action (triggers the ONE global scan) —
+                admin-only. The schedule indicator below stays visible to everyone. */}
+            {auth.isAdmin && (
+              <button onClick={scanNow} disabled={running || scanStarting} style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid ' + (running ? '#1e2840' : '#3b82f6'), background: running ? 'transparent' : '#3b82f615', color: running ? '#4a5568' : '#3b82f6', fontSize: 10, cursor: running ? 'default' : 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{running ? 'scanning…' : scanStarting ? 'starting…' : 'scan'}</button>
+            )}
             <button onClick={function () { setShowLog(function (v) { return !v; }); }} style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid #1e2840', background: showLog ? '#1e2840' : 'transparent', color: showLog ? '#e2e8f0' : '#4a5568', fontSize: 9, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', display: 'flex', alignItems: 'center', gap: 4 }}>{running && <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#f59e0b', animation: '_dot 1s ease infinite', display: 'inline-block' }} />}{'activity'}</button>
             {/* Persistent, non-intrusive sign-in (only when Google auth is configured).
                 Sign-in saves YOUR watchlist/positions; viewing is free either way. */}
@@ -874,7 +922,9 @@ export default function NepseApp() {
               ) : (
                 <div style={card()}>
                   <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 8 }}>No brief yet.</div>
-                  <button onClick={scanNow} style={btn('#3b82f6')}>run scan now</button>
+                  {auth.isAdmin
+                    ? <button onClick={scanNow} style={btn('#3b82f6')}>run scan now</button>
+                    : <div style={{ fontSize: 10, color: '#4a5568' }}>The agent scans on a schedule — the brief appears here.</div>}
                 </div>
               )}
 
@@ -952,8 +1002,14 @@ export default function NepseApp() {
               })}
               {signals.length === 0 && !running && (
                 <div style={{ textAlign: 'center', padding: '40px 20px', color: '#4a5568' }}>
-                  <div style={{ fontSize: 11, marginBottom: 10 }}>no signals yet — the agent scans on schedule, or run one now</div>
-                  <button onClick={scanNow} style={btn('#3b82f6')}>scan now</button>
+                  {auth.isAdmin ? (
+                    <>
+                      <div style={{ fontSize: 11, marginBottom: 10 }}>no signals yet — the agent scans on schedule, or run one now</div>
+                      <button onClick={scanNow} style={btn('#3b82f6')}>scan now</button>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 11 }}>The agent scans on a schedule — new signals appear here.</div>
+                  )}
                 </div>
               )}
             </div>
@@ -1043,9 +1099,15 @@ export default function NepseApp() {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <div style={{ fontSize: 10, color: '#4a5568' }}>{signals.length + ' signals - ' + signals.filter(function (s) { return s.source === 'discovered'; }).length + ' discovered'}</div>
-                <button onClick={scanNow} disabled={running || scanStarting} style={btn('#3b82f6')}>{running ? 'scanning...' : 'fresh scan'}</button>
+                {auth.isAdmin && <button onClick={scanNow} disabled={running || scanStarting} style={btn('#3b82f6')}>{running ? 'scanning...' : 'fresh scan'}</button>}
               </div>
-              {signals.length === 0 && <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11 }}>no signals yet<br /><br /><button onClick={scanNow} style={btn('#3b82f6')}>scan now</button></div>}
+              {signals.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11 }}>
+                  {auth.isAdmin
+                    ? <>no signals yet<br /><br /><button onClick={scanNow} style={btn('#3b82f6')}>scan now</button></>
+                    : 'The agent scans on a schedule — new signals appear here.'}
+                </div>
+              )}
               {signals.map(function (s) {
                 var sc = SIG_COLORS[s.signal] || '#4a5568'; var d = s.live;
                 var isHeld = openPos.find(function (p) { return p.symbol === s.symbol; });
@@ -1286,6 +1348,40 @@ export default function NepseApp() {
 
               {/* Account / admin sign-in (only when Google auth is configured) */}
               <AuthPanel auth={auth} />
+
+              {/* My Alerts — PER-USER prefs (owner-scoped /api/alerts). How the agent
+                  notifies YOU and which signal directions trigger it. Distinct from the
+                  admin Notifications panel below (global channel wiring). Signed-in only;
+                  logged-out visitors get a sign-in prompt. */}
+              {gated ? (
+                <SignInPrompt title="Sign in to set alert preferences" sub="Choose how the agent notifies you and which signals trigger an alert. Your preferences are private to your account." onSignIn={auth.signIn} />
+              ) : (
+                <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f59e0b18', border: '1px solid #f59e0b33', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: '#f59e0b' }}>!</div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>My Alerts</div>
+                      <div style={{ fontSize: 10, color: '#4a5568' }}>How the agent notifies you when a signal fires</div>
+                    </div>
+                  </div>
+                  {[['email', 'Email'], ['telegram', 'Telegram']].map(function (c) {
+                    return (
+                      <div key={c[0]} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
+                        <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{c[1]}</div>
+                        <ToggleBtn on={!!alertPrefs.channels[c[0]]} onClick={function () { toggleAlertChannel(c[0]); }} />
+                      </div>
+                    );
+                  })}
+                  {[['onBuy', 'Alert on BUY signals'], ['onSell', 'Alert on SELL signals']].map(function (t) {
+                    return (
+                      <div key={t[0]} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
+                        <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{t[1]}</div>
+                        <ToggleBtn on={!!alertPrefs.thresholds[t[0]]} onClick={function () { toggleAlertThreshold(t[0]); }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Admin-only config surfaces — hidden for non-admins; the server
                   still enforces the boundary on the actual mutations. */}
