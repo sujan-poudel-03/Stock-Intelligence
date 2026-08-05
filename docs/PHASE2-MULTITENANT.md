@@ -154,10 +154,48 @@ check that catches RLS lockout; `build` cannot).
 
 ---
 
-## One open sub-decision
+## Access scopes — THREE tiers (authoritative gating spec)
 
-**Anonymous viewing:** keep the public track record + shared signals viewable to
-logged-out visitors (recommended — it's the marketing funnel), with only per-user
-features (save watchlist/portfolio/alerts) behind Google sign-in. The alternative is
-a hard login wall (`NEXT_PUBLIC_REQUIRE_LOGIN=true`), which hides the marketing
-surface. Default: **public viewing on, per-user features gated.**
+**DECIDED (owner, 2026-08-05): Option A — segregate public vs gated.** Public viewing
+stays on (marketing funnel); actions require login. Not a hard wall.
+
+| Tier | Who | Can do | Enforcement |
+|---|---|---|---|
+| **Public** (no login) | anyone | **View only:** Today/brief, Signals, Track Record, movers, stock-detail overlay, switch exchange to view | Shared tables, RLS anon **read-only** |
+| **User** (Google login) | any signed-in user | Manage **their own**: watchlist, portfolio/positions, alert prefs, personal view prefs | Per-user tables, RLS `auth.uid() = user_id` |
+| **Admin** (`ADMIN_EMAILS`) | operator | System config: data sources, scan control, **discovery settings** (depth, sector focus, auto-discovery/remove), notification channels, budget/schedule, shadow-B | Server-enforced on `/api/admin/*` (already built) |
+
+**Scoping subtleties (get these right):**
+- **Agent/discovery settings are ADMIN, not User** — they shape the ONE global scan
+  that serves everyone; there is no per-user discovery depth. Today they render for
+  everyone (single-tenant open mode); Phase 2 moves them behind the admin gate.
+- **Watchlist is dual-natured** — per-user (your list/view) AND its union feeds the
+  global scan universe. Per-user data over shared compute; a symbol on 10 watchlists
+  is still scanned once.
+
+## UI/UX requirements for the gates (first-class, not a follow-up)
+
+Gating must feel intentional, never broken. Follows the standing rule *"dependent
+secondary actions must be nested / disabled-with-explanation, never an out-of-order
+control."*
+
+- **Never hide-and-break.** A logged-out user sees gated actions (Add to watchlist,
+  Save position, Set alert) as **present but disabled with an inline reason** or a
+  soft **"Sign in with Google to save"** prompt — not missing, not a dead button, not
+  a 401 error.
+- **Friendly empty states.** The Watchlist/Positions tabs, logged out, show a clear
+  CTA ("Sign in to build your watchlist"), not an error or a blank.
+- **Sign-in is "save your own," not "unlock the app."** Framed as enabling personal
+  features, since viewing is already free. Persistent but non-intrusive sign-in in
+  the header; after sign-in the user's data loads seamlessly (identity only — **no
+  scan/fetch triggered**).
+- **Admin surfaces cleanly separated.** Admin-only panels (Settings/Agent config) are
+  hidden for non-admins (and server-enforced), shown only to admins — no greyed/
+  broken admin controls leaking to regular users.
+- **Responsive + themed.** All gate states (prompts, sheets, empty states) work on
+  mobile (the responsive layer already shipped) and match the dark aesthetic.
+- **Continuity of the public surface.** The track record stays the front-and-center
+  marketing hook for logged-out visitors.
+
+*(Alternative, NOT chosen: hard login wall `NEXT_PUBLIC_REQUIRE_LOGIN=true` — hides
+everything, including the marketing surface, behind sign-in.)*
