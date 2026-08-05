@@ -3,6 +3,7 @@ import { scanMarket, runDiscovery, scanOneStock, runBrief } from '@/lib/scan';
 import { getWeightContext } from '@/lib/calibration';
 import { checkOutcomes } from '@/lib/outcomes';
 import { unionWatchlistSymbols } from '@/lib/watchlistUnion';
+import { KV } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
