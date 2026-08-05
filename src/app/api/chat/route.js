@@ -4,9 +4,17 @@ import { withGuard } from '@/lib/respond';
 import { remaining } from '@/lib/budget';
 import { getOverviewContext } from '@/lib/calibration';
 import { getKnowledgeContext } from '@/lib/knowledge';
+import { getUserFromRequest } from '@/lib/auth';
+import { checkAndBumpChatQuota } from '@/lib/userQuota';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+// Auth is "on" when the client Supabase config is present (same signal the client's
+// authConfigured uses). When on, Ask is a per-user feature: sign-in required + a
+// per-user daily quota. When off (single-operator local deploy), Ask stays open.
+const authOn = () =>
+  Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
 // POST /api/chat  { message, context } -> { reply }
 //
@@ -15,6 +23,16 @@ export const maxDuration = 60;
 // and the daily LLM budget still applies. `context` is sent by the client and
 // carries the bits it holds locally (portfolio is client-side state).
 export const POST = withGuard(async (request) => {
+  // Per-user gate: when auth is configured, Ask requires sign-in (it's a per-user
+  // feature and draws the shared LLM budget). Single-operator deploys stay open.
+  const user = await getUserFromRequest(request);
+  if (authOn() && !user) {
+    return NextResponse.json(
+      { error: 'Sign in to use Ask.', authRequired: true },
+      { status: 401 }
+    );
+  }
+
   let body;
   try {
     body = await request.json();
@@ -31,6 +49,18 @@ export const POST = withGuard(async (request) => {
       reply: "I've hit today's AI usage limit, so I can't pull fresh analysis right now. Try again after the daily reset (00:00 UTC).",
       budget: false,
     });
+  }
+
+  // Per-user daily quota: stops a single user from draining the shared budget for
+  // everyone. Only enforced for signed-in users (open single-operator deploys skip).
+  if (user) {
+    const q = await checkAndBumpChatQuota(user.id);
+    if (!q.allowed) {
+      return NextResponse.json({
+        reply: `You've reached today's Ask limit (${q.limit} questions). It resets at 00:00 UTC — the daily brief, signals, and track record are still here in the meantime.`,
+        quota: false,
+      });
+    }
   }
 
   const ctx = body?.context || {};

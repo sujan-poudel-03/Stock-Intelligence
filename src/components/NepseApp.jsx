@@ -9,6 +9,7 @@ import AuthPanel from '@/components/AuthPanel';
 import LoginWall from '@/components/LoginWall';
 import Disclaimer from '@/components/Disclaimer';
 import { useAuth } from '@/lib/useAuth';
+import { getAccessToken } from '@/lib/authClient';
 import useBreakpoint from '@/hooks/useBreakpoint';
 import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 
@@ -613,6 +614,8 @@ export default function NepseApp() {
   function sendChat(text) {
     var msg = (text || chatInput || '').trim();
     if (!msg || chatLoading) return;
+    // Ask is a per-user feature when auth is on — nudge to sign in instead of a 401.
+    if (gated) { showToast('Sign in with Google to use Ask', 'err'); return; }
     setChatInput('');
     var newChat = chat.concat([{ role: 'user', content: msg, ts: new Date().toISOString() }]);
     setChat(newChat); store.deviceSet('ni:chat', newChat); setChatLoading(true);
@@ -622,9 +625,12 @@ export default function NepseApp() {
       watchlist: watchlist,
       market: market ? { index: market.index, change_pct: market.change_pct, sentiment: market.sentiment } : null,
     };
-    fetch('/api/chat', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: msg, context: context }),
+    getAccessToken().then(function (token) {
+      return fetch('/api/chat', {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
+        body: JSON.stringify({ message: msg, context: context }),
+      });
     })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -1407,6 +1413,11 @@ export default function NepseApp() {
               </div>
               <button onClick={function () { setSidebarOpen(false); }} style={{ padding: '2px 8px', borderRadius: 5, border: '1px solid #1e2840', background: 'transparent', color: '#4a5568', fontSize: 10, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>close</button>
             </div>
+            {gated ? (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                <SignInPrompt title="Sign in to use Ask" sub="Ask the agent about your portfolio and the market — it fetches live prices when needed. Signed-in only, with a fair daily limit." onSignIn={auth.signIn} />
+              </div>
+            ) : (<>
             <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
               {chat.length === 0 && (
                 <div>
@@ -1442,6 +1453,7 @@ export default function NepseApp() {
                 <button onClick={function () { sendChat(''); }} disabled={chatLoading || !chatInput.trim()} style={{ width: 34, height: 34, borderRadius: 7, border: 'none', background: chatInput.trim() ? '#3b82f6' : '#1e2840', color: chatInput.trim() ? '#fff' : '#2a3550', fontSize: 13, flexShrink: 0, cursor: 'pointer' }}>{'up'}</button>
               </div>
             </div>
+            </>)}
           </div>
         )}
 
