@@ -1,32 +1,36 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { withGuard } from '@/lib/respond';
-import { RETIRED_KV_KEYS } from '@/lib/constants';
+import { RETIRED_KV_KEYS, GLOBAL_READ_KEYS } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 
-// GLOBAL kv read/write. Phase 2 step 5b RETIRED the per-user keys from here (they
-// were the data-leak vector — one identity-less shared row served to every user).
-// Those keys now live in per-user tables / the admin config route / device-local
-// storage; this route returns 410 Gone for them so a stray caller fails loudly
-// instead of silently sharing data. Genuinely-global keys (ni:brief, ni:mkt) still
-// work — this route stays for them.
-function retired(key) {
+// READ-ONLY global kv access. Phase 2 hardening:
+//   - Per-user keys are RETIRED (410) — they moved to per-user tables/routes.
+//   - Only an explicit allowlist of global, public-read keys is served
+//     (GLOBAL_READ_KEYS: the daily brief + market snapshot), and only for READ.
+//   - ALL writes/deletes through this route are rejected (405). Those global keys
+//     are written server-side by the cron/service role directly; no client writes
+//     here. This closes the prior hole where an unauthenticated POST could overwrite
+//     the brief that every user reads (stored-content injection into a money surface)
+//     or DELETE it (DoS).
+// The old exclusion-based ("anything not retired passes") logic is gone — this is a
+// positive allowlist.
+
+// GET /api/storage?key=ni:brief  -> { value: <jsonb> | null }
+export const GET = withGuard(async (request) => {
+  const key = request.nextUrl.searchParams.get('key');
+  if (!key) return NextResponse.json({ error: 'missing key' }, { status: 400 });
+
   if (RETIRED_KV_KEYS.includes(key)) {
     return NextResponse.json(
       { error: 'This key moved to a per-user route in Phase 2. Use /api/watchlist, /api/portfolio, /api/settings or /api/admin/settings.', key, gone: true },
       { status: 410 }
     );
   }
-  return null;
-}
-
-// GET /api/storage?key=ni:brief  -> { value: <jsonb> | null }
-export const GET = withGuard(async (request) => {
-  const key = request.nextUrl.searchParams.get('key');
-  if (!key) return NextResponse.json({ error: 'missing key' }, { status: 400 });
-  const gone = retired(key);
-  if (gone) return gone;
+  if (!GLOBAL_READ_KEYS.includes(key)) {
+    return NextResponse.json({ error: 'unknown or non-readable key', key }, { status: 404 });
+  }
 
   const supabase = getSupabase();
   const { data, error } = await supabase
@@ -39,40 +43,13 @@ export const GET = withGuard(async (request) => {
   return NextResponse.json({ value: data?.value ?? null });
 });
 
-// POST /api/storage  { key, value }  -> upsert
-export const POST = withGuard(async (request) => {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 });
-  }
-
-  const { key, value } = body || {};
-  if (!key) return NextResponse.json({ error: 'missing key' }, { status: 400 });
-  const gone = retired(key);
-  if (gone) return gone;
-
-  const supabase = getSupabase();
-  const { error } = await supabase.from('kv_store').upsert(
-    { key, value, updated_at: new Date().toISOString() },
-    { onConflict: 'key' }
+// Writes are not allowed through this route — global keys are written by the
+// cron/service role, per-user data goes through its own owner-scoped routes.
+const writeRejected = () =>
+  NextResponse.json(
+    { error: 'read-only: writes go through the service role (global) or per-user routes (/api/watchlist, /api/portfolio, /api/settings)' },
+    { status: 405 }
   );
 
-  if (error) throw error;
-  return NextResponse.json({ ok: true, key });
-});
-
-// DELETE /api/storage?key=ni:brief
-export const DELETE = withGuard(async (request) => {
-  const key = request.nextUrl.searchParams.get('key');
-  if (!key) return NextResponse.json({ error: 'missing key' }, { status: 400 });
-  const gone = retired(key);
-  if (gone) return gone;
-
-  const supabase = getSupabase();
-  const { error } = await supabase.from('kv_store').delete().eq('key', key);
-
-  if (error) throw error;
-  return NextResponse.json({ ok: true, key });
-});
+export const POST = withGuard(async () => writeRejected());
+export const DELETE = withGuard(async () => writeRejected());

@@ -42,6 +42,17 @@ export const RETIRED_KV_KEYS = [
   'ni:sc',       // stock cache           -> device-local
 ];
 
+// The ONLY keys /api/storage will serve — and it serves them READ-ONLY. These are
+// global, non-sensitive, public-read surfaces (the daily brief + market snapshot)
+// written server-side by the cron/service role directly (never via this HTTP route).
+// Everything else is either retired (per-user, 410) or unknown (404); ALL writes/
+// deletes through this route are rejected, closing the old anon-write hole where an
+// unauthenticated POST could overwrite the brief every user reads.
+export const GLOBAL_READ_KEYS = [
+  'ni:brief', // daily brief (written by scan/brief via service role)
+  'ni:mkt',   // market snapshot
+];
+
 // Idempotency / liveness windows.
 export const SCAN_GUARD_MS = 30 * 60 * 1000; // skip new scan if one started < 30 min ago
 export const STALE_JOB_MS = 90 * 1000; // reclaim running jobs older than 90s
