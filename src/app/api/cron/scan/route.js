@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery } from '@/lib/scan';
 import { normalizeExchange } from '@/lib/exchanges';
+import { unionWatchlistSymbols } from '@/lib/watchlistUnion';
 import { exchangeColumnReady } from '@/lib/schemaFlags';
 import { triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
@@ -102,7 +103,7 @@ async function handle(request) {
 
   // 3. Resolve watchlist + (full mode only) run discovery. Light mode scans the
   // watchlist only — no discovery LLM call.
-  const watchlist = await loadWatchlist(supabase);
+  const watchlist = await loadWatchlist(supabase, exchange);
   const settings = await loadSettings(supabase);
   let discovered = [];
   // Full mode runs discovery unless the V1 Settings tab turned it off.
@@ -204,19 +205,23 @@ async function loadRecentMarket(supabase, excludeScanId) {
   return data?.[0]?.market || null;
 }
 
-async function loadWatchlist(supabase) {
-  const { data } = await supabase
-    .from('kv_store')
-    .select('value')
-    .eq('key', KV.WATCHLIST)
-    .maybeSingle();
-
-  const value = data?.value;
-  const list = Array.isArray(value) ? value : Array.isArray(value?.symbols) ? value.symbols : [];
-  // Discovery-driven: no hardcoded fallback. The watchlist is an OUTPUT of the
-  // promotion engine (symbols that keep recurring in discovery), so early on it
-  // is empty and the scan runs on discovered movers alone.
-  return list.map((s) => (typeof s === 'string' ? s : s?.symbol)).filter(Boolean);
+async function loadWatchlist(supabase, exchange) {
+  // Phase 2 step 4: the scan universe is the UNION of every user's watchlist for
+  // this exchange (distinct symbols), so a symbol on 10 users' lists is scanned
+  // ONCE — cost scales with distinct symbols, not user count. Fails safe: on any
+  // error (table missing on an unmigrated DB, transient read) the scan falls back
+  // to discovered movers alone, exactly like the old empty-watchlist behaviour.
+  try {
+    const { data, error } = await supabase
+      .from('watchlists')
+      .select('symbol')
+      .eq('exchange', exchange);
+    if (error) throw error;
+    return unionWatchlistSymbols(data || []);
+  } catch (err) {
+    console.warn('[scan] watchlist union unavailable, scanning discovery only:', err?.message || err);
+    return [];
+  }
 }
 
 async function loadSettings(supabase) {

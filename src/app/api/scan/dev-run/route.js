@@ -2,7 +2,7 @@ import { getServiceSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery, scanOneStock, runBrief } from '@/lib/scan';
 import { getWeightContext } from '@/lib/calibration';
 import { checkOutcomes } from '@/lib/outcomes';
-import { KV } from '@/lib/constants';
+import { unionWatchlistSymbols } from '@/lib/watchlistUnion';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -49,7 +49,7 @@ export async function GET() {
         await supabase.from('scans').update({ market, phase: 'discovery' }).eq('id', scanId);
 
         // 2. Discovery + watchlist.
-        const watchlist = await loadWatchlist(supabase);
+        const watchlist = await loadWatchlist(supabase, 'NEPSE');
         const discovered = await runDiscovery(market, {});
         const symbols = [...new Set([...watchlist, ...discovered].map((s) => s.toUpperCase()))];
         emit({ step: 'discovery', symbols });
@@ -142,14 +142,18 @@ export async function GET() {
   });
 }
 
-async function loadWatchlist(supabase) {
-  const { data } = await supabase
-    .from('kv_store')
-    .select('value')
-    .eq('key', KV.WATCHLIST)
-    .maybeSingle();
-  const value = data?.value;
-  const list = Array.isArray(value) ? value : Array.isArray(value?.symbols) ? value.symbols : [];
-  // Discovery-driven: no hardcoded fallback (watchlist is promotion-derived).
-  return list.map((s) => (typeof s === 'string' ? s : s?.symbol)).filter(Boolean);
+async function loadWatchlist(supabase, exchange = 'NEPSE') {
+  // Phase 2 step 4: union of every user's watchlist for this exchange (matches the
+  // real cron path). Fails safe to discovery-only if the table is unavailable.
+  try {
+    const { data, error } = await supabase
+      .from('watchlists')
+      .select('symbol')
+      .eq('exchange', exchange);
+    if (error) throw error;
+    return unionWatchlistSymbols(data || []);
+  } catch (err) {
+    console.warn('[dev-run] watchlist union unavailable, scanning discovery only:', err?.message || err);
+    return [];
+  }
 }

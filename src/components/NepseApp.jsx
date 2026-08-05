@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { dbGet, dbSet } from '@/lib/clientStorage';
+import { dbGet } from '@/lib/clientStorage';
+import * as store from '@/lib/userStore';
 import AdminDataSources from '@/components/AdminDataSources';
 import AdminChannels from '@/components/AdminChannels';
 import AuthPanel from '@/components/AuthPanel';
@@ -16,13 +17,15 @@ import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 //
 // This is the V1 design (nepse_intelligence.jsx) ported onto the V2 server
 // backend. What changed from V1:
-//   - window.storage  -> dbGet/dbSet (@/lib/clientStorage, kv_store backed)
+//   - window.storage  -> global reads via dbGet (ni:brief/ni:mkt); per-user data
+//     (watchlist/portfolio/settings) via @/lib/userStore (Phase 2 per-user routes)
 //   - client runScan loop -> server scan: POST /api/cron/scan + poll /api/scan/status
 //   - direct Anthropic callAI -> server routes: POST /api/chat, GET /api/stock
 //   - signals come from GET /api/signals (latest scan), not client state
 //   - market comes from /api/scan/status (scan.market), normalized to V1 shape
-// Portfolio + trade log stay client-side (ni:p / ni:tl) — they are the user's
-// own bookkeeping, not agent output.
+// Portfolio + trade log are the user's own bookkeeping (not agent output): Phase 2
+// moves them to the per-user `portfolios` table (/api/portfolio), or localStorage in
+// open/single-operator mode. Trade log is derived from the closed position rows.
 // ============================================================================
 
 const POLL_MS = 5000;
@@ -42,6 +45,34 @@ function calcC(action, qty, price, buyPrice, holdDays) {
   var net = action === 'BUY' ? tv + tot : tv - tot;
   if (action === 'SELL' && buyPrice > 0) npl = gpl - tot;
   return { tv: tv, b: broker, s: sebon, d: dp, cgt: cgt, tot: tot, be: be, net: net, gpl: gpl, npl: npl };
+}
+
+// -- per-user table <-> UI shape (Phase 2) ------------------------------------
+// portfolios rows store only the raw position; the money math (break-even, invested,
+// charges, P&L) is recomputed here via the same charge engine, so nothing derived is
+// persisted. NOTE: the schema has no free-text column, so buy `basis` is only present
+// in local/open mode (kept in localStorage); over the API it comes back blank.
+function posFromRow(row) {
+  var qty = Number(row.qty); var price = Number(row.buy_price);
+  var c = calcC('BUY', qty, price, 0, 0);
+  return {
+    id: row.id, date: row.opened_at, symbol: row.symbol, qty: qty, price: price,
+    sl: row.stop_loss != null ? Number(row.stop_loss) : null,
+    target: row.target != null ? Number(row.target) : null,
+    be: c.be, net: c.net, tot: c.tot, basis: row.basis || '',
+    status: String(row.status || 'open').toUpperCase(), exchange: row.exchange,
+  };
+}
+// A closed position -> the SELL trade the "closed trades" list renders.
+function tradeFromClosedRow(row) {
+  var qty = Number(row.qty); var buy = Number(row.buy_price); var sp = Number(row.sell_price);
+  var hd = row.opened_at && row.closed_at ? Math.floor((new Date(row.closed_at) - new Date(row.opened_at)) / 86400000) : 0;
+  var c = calcC('SELL', qty, sp, buy, hd);
+  return {
+    id: 'S' + row.id, date: row.closed_at, symbol: row.symbol, action: 'SELL', qty: qty, price: sp,
+    buyPrice: buy, holdDays: hd, npl: c.npl, gpl: c.gpl, cgt: c.cgt, tot: c.tot, net: c.net,
+    status: 'CLOSED', matchId: row.id,
+  };
 }
 
 // -- utils --------------------------------------------------------------------
@@ -188,7 +219,7 @@ export default function NepseApp() {
   const [tradeLog, setTradeLog] = useState([]);
   const [stockCache, setStockCache] = useState({});
   const [watchlist, setWatchlist] = useState([]);
-  const [memory, setMemory] = useState({});
+  const [wlSources, setWlSources] = useState({}); // { SYMBOL: 'manual'|'discovered'|'holding' }
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
 
   // Chat
@@ -259,42 +290,54 @@ export default function NepseApp() {
     setTimeout(function () { setToasts(function (p) { return p.filter(function (x) { return x.id !== id; }); }); }, 3000);
   }, []);
   function openAsk(prefill) { setSidebarOpen(true); if (prefill) setChatInput(prefill); }
-  function saveSettings(updated) { setSettings(updated); dbSet('ni:settings', updated); }
-  function saveExchange(ex) { setExchange(ex); saveSettings(Object.assign({}, settings, { exchange: ex })); }
 
-  function addToWatchlist(sym, source) {
+  // Persistence mode for the thin per-user layer (watchlist / portfolio / personal
+  // settings). 'local' = open/single-operator mode (no Supabase auth); 'api' = signed
+  // in (own rows via the identity-scoped routes); 'gated' = auth configured but signed
+  // out (writes refused, friendly sign-in affordance shown instead). Signing in only
+  // reads the user's own rows — it never triggers a scan or a market fetch.
+  function currentMode() {
+    if (!auth.configured) return 'local';
+    return auth.signedIn ? 'api' : 'gated';
+  }
+  const gated = auth.configured && !auth.signedIn && !auth.loading; // show sign-in affordances
+
+  // Global agent/discovery config — ADMIN-only write (server-enforced on
+  // /api/admin/settings). Only reachable from admin-gated panels.
+  function saveSettings(updated) { setSettings(updated); store.saveGlobalSettings(updated); }
+
+  // Exchange is a personal VIEW preference: always device-local (so logged-out
+  // visitors can switch markets to view) and additionally synced to the user's row
+  // when signed in.
+  function saveExchange(ex) {
+    setExchange(ex);
+    store.deviceSet('ni:exchange', ex);
+    if (currentMode() === 'api') store.savePersonalSettings('api', { exchange: ex });
+  }
+
+  async function addToWatchlist(sym, source) {
     sym = (sym || '').toUpperCase().trim();
     if (!sym || sym.length < 2) return false;
-    var added = false;
-    setWatchlist(function (prev) {
-      if (prev.indexOf(sym) >= 0) return prev;
-      added = true;
-      var updated = prev.concat([sym]);
-      dbSet('ni:wl', updated);
-      setMemory(function (m) {
-        var sources = Object.assign({}, m.wl_sources || {});
-        sources[sym] = { source: source || 'manual', added: new Date().toISOString() };
-        var u = Object.assign({}, m, { wl_sources: sources });
-        dbSet('ni:mem', u);
-        return u;
-      });
-      return updated;
-    });
-    return added;
+    if (gated) { showToast('Sign in with Google to save', 'err'); return false; }
+    if (watchlist.indexOf(sym) >= 0) return false;
+    // optimistic
+    setWatchlist(function (prev) { return prev.indexOf(sym) >= 0 ? prev : prev.concat([sym]); });
+    setWlSources(function (m) { var u = Object.assign({}, m); u[sym] = source || 'manual'; return u; });
+    try { await store.addWatchlist(currentMode(), exchange, sym, source || 'manual'); }
+    catch (e) { showToast('Could not save watchlist', 'err'); }
+    return true;
   }
-  function removeFromWatchlist(sym) {
-    setWatchlist(function (prev) {
-      var updated = prev.filter(function (s) { return s !== sym; });
-      dbSet('ni:wl', updated);
-      return updated;
-    });
-    setMemory(function (m) {
-      var sources = Object.assign({}, m.wl_sources || {});
-      delete sources[sym];
-      var u = Object.assign({}, m, { wl_sources: sources });
-      dbSet('ni:mem', u);
-      return u;
-    });
+  async function removeFromWatchlist(sym) {
+    setWatchlist(function (prev) { return prev.filter(function (s) { return s !== sym; }); });
+    setWlSources(function (m) { var u = Object.assign({}, m); delete u[sym]; return u; });
+    try { await store.removeWatchlist(currentMode(), exchange, sym); }
+    catch (e) { showToast('Could not update watchlist', 'err'); }
+  }
+
+  // Intercept the buy affordance when signed out: a soft prompt, never a dead button.
+  function startBuy(id) {
+    if (gated) { showToast('Sign in with Google to save positions', 'err'); setTab('settings'); return; }
+    setBuyTarget(id);
   }
 
   // -- data loaders -----------------------------------------------------------
@@ -323,6 +366,18 @@ export default function NepseApp() {
       if (data && data.overall) setTrack(data);
     } catch (err) { console.error('track-record load failed:', err); }
   }, []);
+
+  // Reload the user's own positions (per-user table in 'api', localStorage in 'local',
+  // empty when signed out). tradeLog is derived from the closed rows.
+  const reloadPortfolio = useCallback(async () => {
+    const mode = !auth.configured ? 'local' : (auth.signedIn ? 'api' : 'gated');
+    if (mode === 'gated') { setPortfolio([]); setTradeLog([]); return; }
+    try {
+      const rows = await store.loadPortfolio(mode);
+      setPortfolio(rows.map(posFromRow));
+      setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
+    } catch (err) { console.error('portfolio load failed:', err); }
+  }, [auth.configured, auth.signedIn]);
 
   // -- status polling ---------------------------------------------------------
   const stopPolling = useCallback(() => {
@@ -358,23 +413,24 @@ export default function NepseApp() {
   // -- initial load -----------------------------------------------------------
   useEffect(() => {
     (async () => {
-      const v = await Promise.all([
-        dbGet('ni:p'), dbGet('ni:tl'), dbGet('ni:mkt'), dbGet('ni:brief'),
-        dbGet('ni:wl'), dbGet('ni:chat'), dbGet('ni:sc'), dbGet('ni:mem'), dbGet('ni:settings'),
-      ]);
-      if (v[0]) setPortfolio(v[0]);
-      if (v[1]) setTradeLog(v[1]);
-      if (v[2]) setMarket(normalizeMarket(v[2]));
-      if (v[3]) setBrief(v[3]);
-      if (Array.isArray(v[4])) setWatchlist(v[4]);
-      if (v[5]) setChat(v[5]);
-      if (v[6]) setStockCache(v[6]);
-      if (v[7]) setMemory(v[7]);
+      // GLOBAL / device-local reads only — NEVER per-user data here (that loads in a
+      // separate auth-keyed effect, and never triggers a scan/fetch).
+      //   ni:brief, ni:mkt   -> global, still on /api/storage
+      //   ni:chat, ni:sc     -> device-local (was the leaky shared kv)
+      //   global discovery cfg -> /api/admin/settings (open read)
+      const [mkt, b, gs] = await Promise.all([dbGet('ni:mkt'), dbGet('ni:brief'), store.loadGlobalSettings()]);
+      if (mkt) setMarket(normalizeMarket(mkt));
+      if (b) setBrief(b);
+      setChat(store.deviceGet('ni:chat', []) || []);
+      setStockCache(store.deviceGet('ni:sc', {}) || {});
       var hasExchangePref = false;
-      if (v[8]) {
-        setSettings(Object.assign({}, DEFAULT_SETTINGS, v[8]));
-        if (v[8].exchange) { setExchange(v[8].exchange); hasExchangePref = true; }
+      if (gs && Object.keys(gs).length) {
+        setSettings(Object.assign({}, DEFAULT_SETTINGS, gs));
+        // Legacy continuity: older global kv held the operator's exchange too.
+        if (gs.exchange) { setExchange(gs.exchange); hasExchangePref = true; }
       }
+      var savedEx = store.deviceGet('ni:exchange', null);
+      if (savedEx) { setExchange(savedEx); hasExchangePref = true; }
 
       // Which markets are actually live (server-gated). NEPSE is always available.
       try {
@@ -415,6 +471,42 @@ export default function NepseApp() {
     if (exFirstRef.current) { exFirstRef.current = false; return; }
     loadSignals();
   }, [exchange, loadSignals]);
+
+  // On sign-in (api mode), pull the user's saved exchange ONCE (identity read, no
+  // scan). Kept separate from the exchange-change effect to avoid a save/reload race.
+  useEffect(() => {
+    if (auth.loading || !auth.configured || !auth.signedIn) return;
+    let alive = true;
+    store.loadPersonalSettings('api').then(function (prefs) {
+      if (alive && prefs && prefs.exchange) setExchange(prefs.exchange);
+    });
+    return function () { alive = false; };
+  }, [auth.loading, auth.configured, auth.signedIn]);
+
+  // Load the user's OWN watchlist (per-exchange) + portfolio whenever the auth mode or
+  // exchange changes. Signed out -> friendly-empty (no request, no 401 surfaced).
+  useEffect(() => {
+    if (auth.loading) return;
+    const mode = !auth.configured ? 'local' : (auth.signedIn ? 'api' : 'gated');
+    let alive = true;
+    (async () => {
+      if (mode === 'gated') {
+        if (alive) { setWatchlist([]); setWlSources({}); setPortfolio([]); setTradeLog([]); }
+        return;
+      }
+      try {
+        const wl = await store.loadWatchlist(mode, exchange);
+        if (!alive) return;
+        setWatchlist(wl.symbols); setWlSources(wl.sources);
+        const rows = await store.loadPortfolio(mode);
+        if (!alive) return;
+        setPortfolio(rows.map(posFromRow));
+        setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
+      } catch (err) { console.error('user data load failed:', err); }
+    })();
+    return function () { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.loading, auth.configured, auth.signedIn, exchange]);
 
   // Load the agent's real track record the first time the tab is opened.
   useEffect(() => {
@@ -457,7 +549,7 @@ export default function NepseApp() {
         if (res.data) {
           setOvData(res.data);
           var sc = {}; sc[sym] = res.data;
-          setStockCache(function (prev) { var u = Object.assign({}, prev, sc); dbSet('ni:sc', u); return u; });
+          setStockCache(function (prev) { var u = Object.assign({}, prev, sc); store.deviceSet('ni:sc', u); return u; });
         }
         if (res.analysis) setOvAnalysis(res.analysis);
         else if (res.budget === false) setOvAnalysis('AI budget reached for today — showing last stored data. Fresh analysis resumes after 00:00 UTC.');
@@ -473,27 +565,34 @@ export default function NepseApp() {
       .then(function () { setOvLoading(false); });
   }
 
-  // -- trades (client-side) ---------------------------------------------------
-  function logBuy(sig) {
+  // -- trades (per-user table via /api/portfolio, or device-local in open mode) -----
+  async function logBuy(sig) {
+    if (gated) { showToast('Sign in with Google to save positions', 'err'); return; }
     var q = parseFloat(buyQty), p = sig.price || 0;
     if (!q || !p || !buyReason) { showToast('Basis required', 'err'); return; }
-    var c = calcC('BUY', q, p, 0, 0);
-    var trade = { id: 'T' + Date.now(), date: new Date().toISOString(), symbol: sig.symbol, action: 'BUY', qty: q, price: p, tot: c.tot, be: c.be, net: c.net, sl: parseFloat(buySL) || sig.sl || null, target: sig.target || null, basis: buyReason, status: 'OPEN' };
-    var updP = portfolio.concat([trade]); var updL = [trade].concat(tradeLog);
-    setPortfolio(updP); dbSet('ni:p', updP); setTradeLog(updL); dbSet('ni:tl', updL);
-    addToWatchlist(sig.symbol, 'holding');
-    setBuyTarget(null); setBuyQty(''); setBuySL(''); setBuyReason('');
-    showToast('BUY ' + sig.symbol + ' Rs' + p); setTab('positions');
+    var row = {
+      exchange: exchange, symbol: sig.symbol, qty: q, buy_price: p,
+      stop_loss: parseFloat(buySL) || sig.sl || null, target: sig.target || null,
+      basis: buyReason, // persisted only in local/open mode (schema has no column)
+    };
+    try {
+      await store.openPosition(currentMode(), row);
+      await reloadPortfolio();
+      await addToWatchlist(sig.symbol, 'holding');
+      setBuyTarget(null); setBuyQty(''); setBuySL(''); setBuyReason('');
+      showToast('BUY ' + sig.symbol + ' Rs' + p); setTab('positions');
+    } catch (e) { showToast('Could not save position', 'err'); }
   }
 
-  function logSell(pos) {
+  async function logSell(pos) {
+    if (gated) { showToast('Sign in with Google to save', 'err'); return; }
     var sp = parseFloat(sellPrice);
     if (!sp || !sellReason) { showToast('Price and reason required', 'err'); return; }
     var hd = daysAgo(pos.date), c = calcC('SELL', pos.qty, sp, pos.price, hd);
-    var trade = { id: 'T' + Date.now(), date: new Date().toISOString(), symbol: pos.symbol, action: 'SELL', qty: pos.qty, price: sp, tot: c.tot, npl: c.npl, gpl: c.gpl, cgt: c.cgt, net: c.net, buyPrice: pos.price, holdDays: hd, basis: sellReason, status: 'CLOSED', matchId: pos.id };
-    var updP = portfolio.map(function (p) { return p.id === pos.id ? Object.assign({}, p, { status: 'CLOSED' }) : p; });
-    var updL = [trade].concat(tradeLog);
-    setPortfolio(updP); dbSet('ni:p', updP); setTradeLog(updL); dbSet('ni:tl', updL);
+    try {
+      await store.closePosition(currentMode(), pos.id, sp);
+      await reloadPortfolio();
+    } catch (e) { showToast('Could not close position', 'err'); return; }
     var outcome = c.npl >= 0 ? 'WIN' : 'LOSS';
     // Reflect the outcome on the local signal copy for immediate UX feedback
     // (server computes durable outcomes separately via its outcomes step).
@@ -516,7 +615,7 @@ export default function NepseApp() {
     if (!msg || chatLoading) return;
     setChatInput('');
     var newChat = chat.concat([{ role: 'user', content: msg, ts: new Date().toISOString() }]);
-    setChat(newChat); dbSet('ni:chat', newChat); setChatLoading(true);
+    setChat(newChat); store.deviceSet('ni:chat', newChat); setChatLoading(true);
     var context = {
       portfolio: portfolio,
       signals: signals.slice(0, 12).map(function (s) { return { symbol: s.symbol, signal: s.signal, price: s.price }; }),
@@ -531,11 +630,11 @@ export default function NepseApp() {
       .then(function (d) {
         var reply = d.reply || (d.error ? 'Error: ' + d.error : 'No response.');
         var final = newChat.concat([{ role: 'assistant', content: reply, ts: new Date().toISOString() }]);
-        setChat(final); dbSet('ni:chat', final); setChatLoading(false);
+        setChat(final); store.deviceSet('ni:chat', final); setChatLoading(false);
       })
       .catch(function (e) {
         var final = newChat.concat([{ role: 'assistant', content: 'Error: ' + e.message, ts: new Date().toISOString() }]);
-        setChat(final); dbSet('ni:chat', final); setChatLoading(false);
+        setChat(final); store.deviceSet('ni:chat', final); setChatLoading(false);
       });
   }
 
@@ -571,7 +670,7 @@ export default function NepseApp() {
       </div>
 
       {/* ONBOARDING — first-run "which market do you trade?" step. Minimal +
-          dismissible; sets the stored exchange preference (ni:settings.exchange). */}
+          dismissible; sets the device-local exchange preference (ni:exchange). */}
       {showOnboard && (
         <div className="modal-overlay" style={{ zIndex: 500, background: '#04060bdd' }}>
           <div className="modal-panel" style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 14, padding: '22px 24px', maxWidth: 460 }}>
@@ -619,6 +718,14 @@ export default function NepseApp() {
             {realisedPL !== 0 && <span style={{ fontSize: 10, fontWeight: 500, color: realisedPL >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{signed(realisedPL)}</span>}
             <button onClick={scanNow} disabled={running || scanStarting} style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid ' + (running ? '#1e2840' : '#3b82f6'), background: running ? 'transparent' : '#3b82f615', color: running ? '#4a5568' : '#3b82f6', fontSize: 10, cursor: running ? 'default' : 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{running ? 'scanning…' : scanStarting ? 'starting…' : 'scan'}</button>
             <button onClick={function () { setShowLog(function (v) { return !v; }); }} style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid #1e2840', background: showLog ? '#1e2840' : 'transparent', color: showLog ? '#e2e8f0' : '#4a5568', fontSize: 9, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', display: 'flex', alignItems: 'center', gap: 4 }}>{running && <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#f59e0b', animation: '_dot 1s ease infinite', display: 'inline-block' }} />}{'activity'}</button>
+            {/* Persistent, non-intrusive sign-in (only when Google auth is configured).
+                Sign-in saves YOUR watchlist/positions; viewing is free either way. */}
+            {auth.configured && !auth.loading && !auth.signedIn && (
+              <button onClick={auth.signIn} title="Sign in to save your watchlist and positions" style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid #3b82f6', background: '#3b82f615', color: '#3b82f6', fontSize: 10, cursor: 'pointer', fontFamily: 'Inter,sans-serif', fontWeight: 600 }}>Sign in</button>
+            )}
+            {auth.configured && auth.signedIn && auth.email && (
+              <button onClick={function () { setTab('settings'); }} title={auth.email} style={{ width: 24, height: 24, borderRadius: '50%', border: '1px solid #3b82f633', background: '#3b82f618', color: '#3b82f6', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{auth.email[0].toUpperCase()}</button>
+            )}
           </div>
         </div>
         {/* nav bar */}
@@ -829,7 +936,7 @@ export default function NepseApp() {
                       <BuyForm s={s} buyQty={buyQty} setBuyQty={setBuyQty} buySL={buySL} setBuySL={setBuySL} buyReason={buyReason} setBuyReason={setBuyReason} onConfirm={function () { logBuy(s); }} onCancel={function () { setBuyTarget(null); setBuyQty(''); setBuySL(''); setBuyReason(''); }} />
                     ) : (
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button onClick={function () { setBuyTarget(s.id); }} style={btn('#10b981')}>buy</button>
+                        <button onClick={function () { startBuy(s.id); }} style={btn('#10b981')}>buy</button>
                         <button onClick={function () { openStock(s.symbol); }} style={btn('#3b82f6')}>full view</button>
                         <button onClick={function () { openAsk('Signal ' + s.symbol + ' ' + s.signal + ' Rs' + s.price + '. ' + (s.why || '') + ' Should I act?'); }} style={btn()}>ask</button>
                       </div>
@@ -856,7 +963,9 @@ export default function NepseApp() {
                   })}
                 </div>
               )}
-              {openPos.length === 0 && closedSells.length === 0 && <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11 }}>no open positions</div>}
+              {gated
+                ? <SignInPrompt title="Sign in to track your positions" sub="Log your buys and sells to see invested amount, break-even and live P&L. Your positions are private to your account." onSignIn={auth.signIn} />
+                : (openPos.length === 0 && closedSells.length === 0 && <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11 }}>no open positions</div>)}
               {openPos.map(function (p) {
                 var live = stockCache[p.symbol];
                 var sigLive = signals.find(function (s) { return s.symbol === p.symbol && s.live; });
@@ -963,7 +1072,7 @@ export default function NepseApp() {
                       <BuyForm s={s} buyQty={buyQty} setBuyQty={setBuyQty} buySL={buySL} setBuySL={setBuySL} buyReason={buyReason} setBuyReason={setBuyReason} onConfirm={function () { logBuy(s); }} onCancel={function () { setBuyTarget(null); setBuyQty(''); setBuySL(''); setBuyReason(''); }} />
                     ) : (
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {(s.signal === 'BUY' || s.signal === 'WATCH') && <button onClick={function () { setBuyTarget(s.id); }} style={btn('#10b981')}>buy</button>}
+                        {(s.signal === 'BUY' || s.signal === 'WATCH') && <button onClick={function () { startBuy(s.id); }} style={btn('#10b981')}>buy</button>}
                         {s.signal === 'SELL' && isHeld && <button onClick={function () { setSellTarget(isHeld.id); setSellPrice(s.price ? String(s.price) : ''); setTab('positions'); }} style={btn('#ef4444')}>sell</button>}
                         <button onClick={function () { openStock(s.symbol); }} style={btn('#3b82f6')}>full view</button>
                         <button onClick={function () { openAsk('Signal ' + s.symbol + ' ' + s.signal + ' Rs' + s.price + '. ' + (s.why || '') + ' Should I act?'); }} style={btn()}>ask</button>
@@ -1088,6 +1197,10 @@ export default function NepseApp() {
                 </div>
               )}
 
+              {gated ? (
+                <SignInPrompt title="Sign in to build your watchlist" sub="Track the symbols you care about — the agent scans your watchlist every run. Viewing signals and the track record stays free." onSignIn={auth.signIn} />
+              ) : (
+              <>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <input value={wlInput} onChange={function (e) { setWlInput(e.target.value.toUpperCase()); }} onKeyDown={function (e) { if (e.key === 'Enter') { addToWatchlist(wlInput, 'manual'); setWlInput(''); } }} placeholder="add symbol e.g. SANIMA, CHCL..." style={{ flex: 1 }} />
                 <button onClick={function () { addToWatchlist(wlInput, 'manual'); setWlInput(''); }} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #10b981', background: 'transparent', color: '#10b981', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', flexShrink: 0 }}>add</button>
@@ -1099,7 +1212,7 @@ export default function NepseApp() {
                   {watchlist.map(function (sym) {
                     var sig = signals.find(function (s) { return s.symbol === sym; });
                     var sc = sig ? (SIG_COLORS[sig.signal] || '#4a5568') : '#1c2333';
-                    var src = memory.wl_sources && memory.wl_sources[sym] ? memory.wl_sources[sym].source : 'manual';
+                    var src = wlSources[sym] || 'manual';
                     var srcColor = src === 'discovered' ? '#a78bfa' : src === 'holding' ? '#8b5cf6' : '#4a5568';
                     var lp = sig && sig.live ? sig.live.price : null;
                     return (
@@ -1121,6 +1234,8 @@ export default function NepseApp() {
                     );
                   })}
                 </div>
+              )}
+              </>
               )}
             </div>
           )}
@@ -1178,6 +1293,11 @@ export default function NepseApp() {
                 </>
               )}
 
+              {/* Agent/discovery config — shapes the ONE global scan, so ADMIN-only
+                  (hidden for regular users; server-enforced on /api/admin/settings).
+                  A regular user's Settings = Exchange + Account above. */}
+              {auth.isAdmin && (
+              <>
               {/* Discovery */}
               <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
@@ -1269,6 +1389,8 @@ export default function NepseApp() {
                   Scans now run server-side (cron + manual). The agent fetches the market, discovers movers, scans each stock, then writes a brief — crash-safe and within the daily AI budget.
                 </div>
               </div>
+              </>
+              )}
             </div>
           )}
         </div>
@@ -1361,13 +1483,25 @@ export default function NepseApp() {
                   {sbox('signal', ovSig.signal, SIG_COLORS[ovSig.signal])}{sbox('conf', ovSig.confidence, ovSig.confidence === 'HIGH' ? '#10b981' : ovSig.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568')}{sbox('entry', ovSig.entry || '-')}{sbox('stop loss', ovSig.sl ? 'Rs ' + ovSig.sl : '-', '#ef4444')}{sbox('target', ovSig.target ? 'Rs ' + ovSig.target : '-', '#10b981')}
                 </div>
                 {ovSig.why && <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovSig.why}</div>}
-                {ovSig.signal === 'BUY' && <button onClick={function () { setOvSym(null); setBuyTarget(ovSig.id); setBuyQty(''); setBuySL(ovSig.sl ? String(ovSig.sl) : ''); setBuyReason(ovSig.why || ''); setTab('signals'); }} style={btn('#10b981')}>{'log buy for ' + ovSym}</button>}
+                {ovSig.signal === 'BUY' && <button onClick={function () { if (gated) { showToast('Sign in with Google to save positions', 'err'); setOvSym(null); setTab('settings'); return; } setOvSym(null); setBuyTarget(ovSig.id); setBuyQty(''); setBuySL(ovSig.sl ? String(ovSig.sl) : ''); setBuyReason(ovSig.why || ''); setTab('signals'); }} style={btn('#10b981')}>{'log buy for ' + ovSym}</button>}
               </div>
             )}
             {watchlist.indexOf(ovSym) < 0 && <button onClick={function () { addToWatchlist(ovSym, 'manual'); showToast(ovSym + ' added to watchlist'); }} style={{ marginTop: 8, padding: '5px 12px', borderRadius: 7, border: '1px solid #a78bfa', background: 'transparent', color: '#a78bfa', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{'+ add ' + ovSym + ' to watchlist'}</button>}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Logged-out affordance for the per-user tabs (watchlist / positions). Friendly CTA,
+// never an error or a blank — viewing is free; sign-in is to SAVE your own data.
+function SignInPrompt(props) {
+  return (
+    <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '28px 20px', textAlign: 'center', marginTop: 8 }}>
+      <div style={{ fontSize: 13, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', fontWeight: 600, marginBottom: 5 }}>{props.title}</div>
+      <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 16, lineHeight: 1.6, maxWidth: 320, marginLeft: 'auto', marginRight: 'auto' }}>{props.sub}</div>
+      <button onClick={props.onSignIn} style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', background: '#3b82f615', border: '1px solid #3b82f6', borderRadius: 8, padding: '9px 18px', cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Sign in with Google to save</button>
     </div>
   );
 }

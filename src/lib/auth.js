@@ -35,6 +35,31 @@ function bearerToken(request) {
   return m ? m[1].trim() : null;
 }
 
+// getUserFromRequest(request) -> { id, email, token } | null
+//
+// The IDENTITY primitive for the per-user routes (watchlist / portfolio / settings).
+// Same Bearer scheme as requireAdmin: the client sends `Authorization: Bearer
+// <supabase access token>`; we verify it and return the caller's user. Routes use
+// the returned `id` to scope EVERY query by `user_id` (.eq('user_id', id)) — the
+// app-layer owner check that isolates users while RLS is still OFF, and which also
+// survives RLS-on later (belt-and-suspenders). `token` is handed back so the route
+// can build getUserSupabase(token). Returns null (→ 401) when the header is missing
+// or the token is invalid/expired. Unlike requireAdmin there is no "open mode": a
+// per-user row needs a real identity, so no token means no access.
+export async function getUserFromRequest(request) {
+  const token = bearerToken(request);
+  if (!token) return null;
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.auth.getUser(token);
+    const user = data?.user;
+    if (error || !user?.id) return null;
+    return { id: user.id, email: user.email || null, token };
+  } catch {
+    return null;
+  }
+}
+
 // resolveAdmin(request) -> { gateEnabled, isAdmin, email } — NON-gating. Lets the
 // client ask "am I an admin?" so the UI can show/hide admin controls. The UI is a
 // convenience only; the real boundary is requireAdmin on the mutation routes.

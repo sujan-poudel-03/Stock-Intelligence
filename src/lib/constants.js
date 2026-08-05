@@ -26,6 +26,22 @@ export const KV = {
   SETTINGS: 'ni:settings',
 };
 
+// Phase 2 step 5b — identity-less kv keys retired from the global /api/storage
+// route (the data-leak vector: one shared row served to everyone). Their data now
+// lives in per-user tables (/api/watchlist, /api/portfolio, /api/settings), behind
+// the admin gate (/api/admin/settings for the global discovery config), or in
+// device-local storage (chat, stock cache). /api/storage returns 410 for these so a
+// stray caller fails loudly instead of leaking. GLOBAL keys (ni:brief, ni:mkt) stay.
+export const RETIRED_KV_KEYS = [
+  'ni:wl',       // watchlist            -> /api/watchlist (per-user)
+  'ni:mem',      // watchlist meta        -> folded into watchlists.reason
+  'ni:p',        // portfolio             -> /api/portfolio (per-user)
+  'ni:tl',       // trade log             -> derived from closed portfolio rows
+  'ni:settings', // agent/discovery config -> /api/admin/settings (admin, global)
+  'ni:chat',     // chat history          -> device-local
+  'ni:sc',       // stock cache           -> device-local
+];
+
 // Idempotency / liveness windows.
 export const SCAN_GUARD_MS = 30 * 60 * 1000; // skip new scan if one started < 30 min ago
 export const STALE_JOB_MS = 90 * 1000; // reclaim running jobs older than 90s
