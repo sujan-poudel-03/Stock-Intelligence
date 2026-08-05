@@ -70,6 +70,11 @@ const EXPECTED_TABLES = [
   'alerts',
   'events',
   'knowledge',
+  // Phase 2 per-user tables (thin per-user layer; RLS added in a later step).
+  'watchlists',
+  'user_settings',
+  'portfolios',
+  'alert_prefs',
 ];
 
 // --- tiny output helpers ----------------------------------------------------
