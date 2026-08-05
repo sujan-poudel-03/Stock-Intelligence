@@ -93,7 +93,26 @@ export function reconcile(quotes, opts = {}) {
     return rej('stale', sources);
   }
   const stale = ageMs != null && ageMs > o.staleAfterMs;
-  return { verified: true, price, asOf: asOf ?? null, ageMs, stale, sources };
+  // Fundamentals ride along as best-effort METADATA off the winning provider's raw
+  // quote — they never influence whether the price verified (the checks above are
+  // untouched). normalizeQuote deliberately drops them, so we read them back from the
+  // raw `quotes` by matching the surviving source(s), first non-null wins.
+  const fundamentals = pickFundamentals(quotes, sources);
+  return { verified: true, price, asOf: asOf ?? null, ageMs, stale, sources, fundamentals };
+}
+
+// pickFundamentals(rawQuotes, sources): from the reconciled winning source list, the
+// first raw quote carrying a non-null `fundamentals` object. Pure, never throws.
+function pickFundamentals(quotes, sources) {
+  try {
+    for (const src of sources || []) {
+      const q = (quotes || []).find((x) => x && x.source === src && x.fundamentals);
+      if (q) return q.fundamentals;
+    }
+  } catch {
+    /* metadata only — never break a verified price */
+  }
+  return null;
 }
 
 // verifiedPrice(symbol, { providers, ...opts }): fetch from each provider, then

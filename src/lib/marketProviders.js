@@ -17,6 +17,7 @@
 import { verifiedPrice, resolveProviders } from './marketData.js';
 import { fetchYahooStock, normalizeYahooQuote } from './yahoo.js';
 import { getExchange, normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
+import { parseMerolaganiFundamentals } from './merolaganiFundamentals.js';
 
 export const ACTIVE_SOURCES_KEY = 'ni:market_sources';
 // Code default is the offline `sample` source so the app runs with no network/config.
@@ -253,7 +254,16 @@ async function fetchMerolagani(symbol) {
         if (changePct !== -100) prevClose = price / (1 + changePct / 100);
       }
     }
-    return { symbol: s, price, prevClose, changePct, asOf: Date.now(), source: 'merolagani' };
+    // Fundamentals ride along as best-effort METADATA off the SAME page — a parse
+    // failure must never break the price fetch, so it's wrapped and defaults to null.
+    let fundamentals = null;
+    try {
+      fundamentals = parseMerolaganiFundamentals(html);
+    } catch {
+      fundamentals = null;
+    }
+
+    return { symbol: s, price, prevClose, changePct, asOf: Date.now(), source: 'merolagani', fundamentals };
   } catch {
     return null;
   }

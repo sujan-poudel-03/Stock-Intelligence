@@ -43,6 +43,22 @@ export const GET = withGuard(async (request) => {
     .limit(1);
   const signal = sigRows?.[0] || null;
 
+  // Prefer real, ground-truth fundamentals already stored on the latest signal's
+  // live_data (scraped from the verified provider page) over an LLM web-search — it's
+  // reliable and free. When present, skip the LLM entirely and serve the stored data.
+  const storedData = signal?.live_data || null;
+  const hasStoredFundamentals =
+    storedData && (storedData.eps != null || storedData.week52_high != null);
+  if (hasStoredFundamentals) {
+    return NextResponse.json({
+      symbol,
+      data: storedData,
+      analysis: '',
+      signal,
+      stored: true,
+    });
+  }
+
   // Shared cache hit: reuse another user's recent enrichment, no LLM spend.
   const cached = await getCache('stock:' + symbol);
   if (cached) {

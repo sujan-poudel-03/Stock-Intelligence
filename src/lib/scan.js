@@ -214,9 +214,16 @@ Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a
   const r = parseJson(text) || {};
   const sector = r.sector || null;
 
+  // Real fundamentals scraped from the SAME verified provider page (best-effort;
+  // each field is null when absent). These are ground-truth numbers, not LLM-read,
+  // so they populate the stock-detail overlay reliably. Never affects the price gate.
+  const f = verified.fundamentals || {};
+
   // live_data carries the verified price + provenance (source, freshness) so the UI
   // can honestly show "as of …" and which sources agreed. price is ALWAYS the
   // verified number — r.price is intentionally ignored (and no longer requested).
+  // Fundamentals prefer the real scraped values; the LLM's high52/low52/pe/volume
+  // remain as a fallback where the scrape had no number.
   const live = {
     symbol,
     price,
@@ -225,11 +232,21 @@ Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a
     high52: numOrNull(r.high52),
     low52: numOrNull(r.low52),
     volume: numOrNull(r.volume),
-    pe: numOrNull(r.pe),
+    pe: f.pe != null ? f.pe : numOrNull(r.pe),
     sector,
     asOf: verified.asOf ?? null,
     stale: !!verified.stale,
     sources: verified.sources,
+    // Fundamentals under the field names the overlay reads (avg180 kept alongside).
+    week52_high: f.week52_high ?? null,
+    week52_low: f.week52_low ?? null,
+    avg120: f.avg120 ?? null,
+    avg180: f.avg180 ?? null,
+    eps: f.eps ?? null,
+    bv: f.bv ?? null,
+    pbv: f.pbv ?? null,
+    div_pct: f.div_pct ?? null,
+    yield: f.yield ?? null,
   };
 
   // Fill any missing/zero targets deterministically from the verified price, so
