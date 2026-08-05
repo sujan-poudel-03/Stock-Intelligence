@@ -32,10 +32,15 @@ make an admin, Google Sign-In setup, and the owner-action checklist.
   (`cron/scan → scan/worker (self-chains) → scan/brief`); do not add blocking
   fan-outs. Background hand-off uses `waitUntil` (`src/lib/background.js`).
 
-- **Supabase: anon key, RLS deliberately OFF** — a *single-tenant* decision, not a
-  permanent one. Do not add RLS or policies while the app is single-user. All writes
-  are upserts with explicit `onConflict`. Reversing this (Auth + per-user rows +
-  RLS-on) is required before a second real user — see the Production guardrails.
+- **Supabase: RLS is ON (Phase 2 done) — three DB identities.** `getSupabase()`
+  (anon, public reads) · `getServiceSupabase()` (service-role, cron/scan WRITES,
+  bypasses RLS) · `getUserSupabase(token)` (per-user, RLS owner-only). Shared tables
+  (signals/scans/weights/knowledge/…): public SELECT, service-only write. Per-user
+  tables (watchlists/user_settings/portfolios/alert_prefs): owner-only
+  (`auth.uid() = user_id`). kv_store: anon read, service-only write. Every scan-path
+  write MUST use the service client, or RLS blocks it. Shared writes are still upserts
+  with explicit `onConflict`. Full model + the 4-tier access scope:
+  **`docs/PHASE2-MULTITENANT.md`**.
 
 - **Canonical table names are `scans` (runs) and `scan_jobs` (per-symbol queue)** —
   never `scan_runs`, whatever older prose says.
@@ -75,10 +80,12 @@ are cleared. Full rationale + the phased plan is in **Production roadmap** below
   is a go/no-go item, not a footnote. (Engineering guidance only here — not legal
   advice.)
 
-- **Single-tenant assumptions stop at user #2.** The anon-key / no-RLS / shared-state
-  design is a single-user decision. Do not onboard more than one real user until
-  Auth + per-user rows + RLS-on land (Roadmap Phase 2). Any feature storing
-  *user-specific* state must not bake in the shared-singleton model.
+- **Multi-tenancy is DONE (Phase 2 landed 2026-08-05).** Auth (Google) + per-user
+  tables + RLS-on are live; the app is safe for multiple real users. Any NEW
+  user-specific state goes in a per-user table (`user_id`, RLS owner-only) reached
+  via `getUserSupabase(token)` + an explicit `.eq('user_id', user.id)` filter — never
+  the shared-singleton model, never `user_id` on the global market tables. See
+  `docs/PHASE2-MULTITENANT.md`.
 
 - **Market data is GLOBAL, never per-tenant.** Prices, `scans`/`scan_jobs`,
   `signals`, `outcomes`, calibration (`weights`), and `knowledge` are the SAME for
@@ -214,9 +221,19 @@ is existential, while A→B remains an open door later (licensed) but B→A does
   breaks explainability). *Open follow-ups:* apply the migration; wire Thompson
   selection into discovery; feed the shadow scoreboard from a live internal report.
 
-**Phase 2 — Multi-tenant SaaS foundation.** (Preserve the shared/per-user split —
-see the "Market data is GLOBAL" guardrail. Market data/scans/signals/weights/
-knowledge stay global; only a thin per-user layer is added.)
+**Phase 2 — Multi-tenant SaaS foundation. ✅ DONE (2026-08-05).** Auth (Google) +
+per-user tables + RLS-on are live and security-reviewed; the app is multi-user-safe.
+Shipped: 3-client split (anon/service/user), per-user tables
+(watchlists/user_settings/portfolios/alert_prefs) with owner-only RLS, per-user
+routes (`/api/watchlist|portfolio|settings|alerts`), gated UI (sign-in-to-save +
+admin-only config), per-user chat quota, read-only hardened `/api/storage`,
+admin-only in-app scan (`/api/admin/scan`). Billing was **deliberately dropped**
+(free, OAuth-gated). Full model + 4-tier access scope: `docs/PHASE2-MULTITENANT.md`.
+*Deferred follow-ups:* per-user alert **delivery** (prefs stored, not yet sent — needs
+per-user destinations), seed/system watchlist for intraday light scans, billing.
+(Preserve the shared/per-user split — see the "Market data is GLOBAL" guardrail.
+Market data/scans/signals/weights/knowledge stay global; only a thin per-user layer
+is added.)
 - Auth = **Google Sign-In only** (Supabase Google provider). Roles: **admin**
   (Google-email allowlist `ADMIN_EMAILS`) vs **user**. **Start OPEN** — gate only
   `/api/admin/*` (data-source config, scan control) behind the admin check now;

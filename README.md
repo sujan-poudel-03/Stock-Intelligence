@@ -57,9 +57,11 @@ The UI polls `/api/scan/status` every 5s while a scan is running.
    > ```
    > Re-applying is safe: `schema.sql` uses `create table if not exists`.
 
-   > ⚠️ **Leave RLS off.** The app uses the **anon key with no Row Level
-   > Security**. Do not enable Supabase's "Auto-enable RLS for new tables" — RLS
-   > without policies would block every query. The schema deliberately omits RLS.
+   > ✅ **RLS is ON (Phase 2).** Migrations set the policies — per-user tables are
+   > owner-only, shared tables are public-read/service-write, `kv_store` is
+   > read/service-write. Apply migrations via `npm run deploy`. Because RLS is on,
+   > the cron/scan write path needs `SUPABASE_SERVICE_ROLE_KEY` (server-only) — set
+   > it in your host **and** `.env.local`. Model: `docs/PHASE2-MULTITENANT.md`.
 
    Verify with `npm run doctor` (expects `✓ All expected tables exist.`).
 3. **Env** — copy `.env.example` to `.env.local` and fill in:
