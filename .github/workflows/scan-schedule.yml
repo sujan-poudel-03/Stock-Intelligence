@@ -59,11 +59,18 @@ jobs:
           DISPATCH_MODE: ${{ github.event.inputs.mode }}
           DISPATCH_EXCHANGE: ${{ github.event.inputs.exchange }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          if [ -z "${APP_BASE_URL:-}" ]; then
+          # Trim stray whitespace/newlines the secret may carry (a common cause of
+          # curl "URL malformed" / exit 3), and default the scheme to https.
+          APP_BASE_URL="$(printf '%s' "${APP_BASE_URL:-}" | tr -d '[:space:]')"
+          if [ -z "$APP_BASE_URL" ]; then
             echo "::error::APP_BASE_URL secret is not set"; exit 1
           fi
+          case "$APP_BASE_URL" in
+            http://*|https://*) ;;
+            *) APP_BASE_URL="https://$APP_BASE_URL" ;;
+          esac
 
           # Map the triggering cron to (exchange, mode). NEPSE intraday is 'light';
           # everything else 'full'. A manual dispatch overrides both via its inputs.
@@ -79,15 +86,22 @@ jobs:
 
           URL="${APP_BASE_URL%/}/api/cron/scan?exchange=${EXCHANGE}"
           if [ "$MODE" = "light" ]; then URL="${URL}&mode=light"; fi
-
           echo "Triggering ${MODE} ${EXCHANGE} scan -> ${URL}"
+
+          # Capture curl's transport exit code AND the HTTP code separately, so a
+          # transport error (bad URL / DNS) is distinguishable from an HTTP error and
+          # neither is silently swallowed.
+          curl_rc=0
           code=$(curl -sS -o response.json -w '%{http_code}' -X POST "$URL" \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            -H "content-type: application/json")
+            -H "Authorization: Bearer ${CRON_SECRET:-}" \
+            -H "content-type: application/json") || curl_rc=$?
+          if [ "$curl_rc" -ne 0 ]; then
+            echo "::error::curl failed (exit $curl_rc) hitting '$URL' — check the APP_BASE_URL secret"; exit 1
+          fi
 
           echo "HTTP ${code}"
-          echo "Response:"; cat response.json || true; echo ""
+          echo "Response:"; cat response.json 2>/dev/null || true; echo ""
 
           if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-            echo "::error::Scan trigger failed with HTTP ${code}"; exit 1
+            echo "::error::Scan trigger failed with HTTP ${code} (401 => CRON_SECRET mismatch with Vercel)"; exit 1
           fi
