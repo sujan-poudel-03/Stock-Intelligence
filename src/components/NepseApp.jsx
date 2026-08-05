@@ -1570,10 +1570,25 @@ export default function NepseApp() {
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 22, fontWeight: 600, color: '#e2e8f0' }}>{'Rs ' + ovData.price}</span>
                   <span style={{ fontSize: 12, color: ovData.change_pct >= 0 ? '#10b981' : '#ef4444' }}>{toPct(ovData.change_pct)}</span>
-                  <span style={{ fontSize: 8, color: '#10b981', background: '#10b98118', padding: '1px 5px', borderRadius: 2, marginLeft: 'auto' }}>LIVE - merolagani.com</span>
+                  {(function () {
+                    var src = (ovData && ovData.sources) || [];
+                    var isSample = src[0] === 'sample';
+                    var c = isSample ? '#f59e0b' : '#10b981';
+                    return <span style={{ fontSize: 8, color: c, background: c + '18', padding: '1px 5px', borderRadius: 2, marginLeft: 'auto' }}>{src.length ? (isSample ? 'SAMPLE - ' : 'LIVE - ') + src.join(',') : 'LIVE'}</span>;
+                  })()}
                 </div>
                 <div className="metrics-tight" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginBottom: 10 }}>
-                  {[['52w H', 'Rs ' + ovData.week52_high], ['52w L', 'Rs ' + ovData.week52_low], ['120d', 'Rs ' + ovData.avg120], ['EPS', '' + ovData.eps], ['P/E', '' + ovData.pe], ['BV', 'Rs ' + ovData.bv], ['PBV', '' + ovData.pbv], ['Div', ovData.div_pct + '%'], ['Yield', ovData.yield + '%'], ['Vol', '' + ovData.volume]].map(function (item) { return <div key={item[0]} style={{ background: '#080a0f', borderRadius: 4, padding: '4px 7px' }}><div style={{ fontSize: 8, color: '#1c2333', marginBottom: 2 }}>{item[0]}</div><div style={{ fontSize: 11, fontWeight: 500, color: '#c8d4e8' }}>{item[1] || '-'}</div></div>; })}
+                  {(function () {
+                    var od = ovData || {};
+                    var v = function (x) { return x == null || x === '' ? null : x; };
+                    var h52 = v(od.week52_high) != null ? v(od.week52_high) : v(od.high52);
+                    var l52 = v(od.week52_low) != null ? v(od.week52_low) : v(od.low52);
+                    var rows = [['52w H', h52, 'Rs '], ['52w L', l52, 'Rs '], ['120d', v(od.avg120), 'Rs '], ['EPS', v(od.eps)], ['P/E', v(od.pe)], ['BV', v(od.bv), 'Rs '], ['PBV', v(od.pbv)], ['Div', v(od.div_pct), '', '%'], ['Yield', v(od.yield), '', '%'], ['Vol', v(od.volume)]];
+                    return rows.map(function (item) {
+                      var val = item[1] == null ? '-' : (item[2] || '') + item[1] + (item[3] || '');
+                      return <div key={item[0]} style={{ background: '#080a0f', borderRadius: 4, padding: '4px 7px' }}><div style={{ fontSize: 8, color: '#1c2333', marginBottom: 2 }}>{item[0]}</div><div style={{ fontSize: 11, fontWeight: 500, color: '#c8d4e8' }}>{val}</div></div>;
+                    });
+                  })()}
                 </div>
                 {ovData.week52_low && ovData.week52_high && (function () {
                   var pos = Math.min(100, Math.max(0, ((ovData.price - ovData.week52_low) / (ovData.week52_high - ovData.week52_low)) * 100));
