@@ -1,10 +1,24 @@
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
+import { getSupabase, getServiceSupabase } from '@/lib/supabase';
 import { EXPECTED_TABLES } from '@/lib/constants';
 import { pingLLM } from '@/lib/llmPing';
 import { remaining, dailyBudget } from '@/lib/budget';
 
 export const dynamic = 'force-dynamic';
+
+// Probe that the service-role key actually authenticates: a wrong/truncated key
+// still builds a client but fails the query. Returns true (works), false (set but
+// failing), or null (not set). Kept out of GET to keep its complexity down.
+async function probeServiceRole() {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  try {
+    const svc = getServiceSupabase();
+    const { error } = await svc.from('scans').select('id', { head: true, count: 'exact' }).limit(1);
+    return !error;
+  } catch {
+    return false;
+  }
+}
 
 // GET /api/health -> structured readiness report (env, db, schema).
 // 200 when ok, 503 otherwise. Safe to call on Vercel where there is no local
@@ -54,6 +68,10 @@ export async function GET() {
       }
     }
   }
+
+  // Phase 2: validate the service-role key actually AUTHENTICATES against the DB
+  // (env.service_role only proves the var is set; this proves it works).
+  env.service_role_ok = await probeServiceRole();
 
   // Live provider ping — confirms the key authenticates and the API responds.
   const ping = await pingLLM({
