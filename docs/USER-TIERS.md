@@ -106,15 +106,27 @@ label on every action.
 P&L, reset. **Out of scope:** real orders, leverage, options.
 **Effort:** medium — a `paper` flag on positions + a virtual-cash ledger + an order ticket UI.
 
-### 4.2 System / seed watchlist 🔧
+### 4.2 System / seed watchlist ✅ SHIPPED
 **Serves:** Beginner (curated starter watchlist) **and** the platform (seeds the scan so
 signals flow before users add watchlists) — and it's the *correct* fix for the Watch-empty
 issue (auto-promotion's replacement). **Honors the guardrail:** it's a GLOBAL, admin/curated
 (or discovery-fed) list that's globally readable and unioned into the scan — NOT a write to
 every user's per-user watchlist.
-**In scope:** a global/system watchlist table (or sentinel-owner rows), admin-curated +
-optional discovery auto-promotion into it, unioned by `cron/scan loadWatchlist`, surfaced in
-the Watch tab as "discovered/curated" entries distinct from the user's own.
+**Shipped:** a dedicated GLOBAL `system_watchlist` table (migration
+`20260809000000_system_watchlist.sql`, public-read/service-write RLS like
+`corporate_actions`, seeded with 10 NEPSE blue-chips via `INSERT … ON CONFLICT DO
+NOTHING`), gated behind a `systemWatchlistReady()` schema-flag probe so an unmigrated DB is
+byte-for-byte as before. `cron/scan loadWatchlist` folds it into the scan union with ONE
+extra global DB read (no market/LLM I/O) via `buildScanUniverse`. Auto-promotion is
+REINSTATED into this list in `scan/brief` (HOLD symbols over `watch_promote_min` across the
+recent window, liquidity-filtered at write time, `source='discovery'`), gated on
+`settings.auto_promote_on` (default on). Admin curation via `POST /api/admin/system-watchlist`
+(add/deactivate/remove, `requireAdmin`); public read via `GET /api/system-watchlist`
+(anon, edge-cached) so signed-out users see the curated universe. The Watch tab renders it as
+a DISTINCT "Curated watchlist (scanned for everyone)" section, never merged into the user's
+own rows. **Not reinstated:** auto-PRUNE/removal from the shared list (a per-user "stale"
+judgement doesn't map cleanly onto a global list) — the Settings "Auto-Remove" control stays
+inactive.
 
 ### 4.3 Plain-English layer 🔧
 **Serves:** Beginner. Jargon tooltips/glossary (EPS, P/E, book value, "BEARISH",

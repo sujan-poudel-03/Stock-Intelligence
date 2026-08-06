@@ -7,9 +7,12 @@ import { deliverSignalAlerts } from '@/lib/alertDelivery';
 import { runBackground } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { notify, formatScanDigest } from '@/lib/notify';
-import { exchangeColumnReady } from '@/lib/schemaFlags';
+import { exchangeColumnReady, systemWatchlistReady } from '@/lib/schemaFlags';
+import { selectPromotions } from '@/lib/systemWatchlist';
+import { filterLiquidSymbols, resolveMinTurnover } from '@/lib/liquidity';
+import { getLiquidityBoard } from '@/lib/marketProviders';
 import { withGuard } from '@/lib/respond';
-import { KV } from '@/lib/constants';
+import { KV, SIGNAL_HISTORY_SCANS, WATCH_PROMOTE_MIN } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -78,19 +81,19 @@ export const POST = withGuard(async (request) => {
     { onConflict: 'key' }
   );
 
-  // 4 / 4b. Watchlist auto-prune + auto-promotion DISABLED under multi-tenancy.
-  // These used to read/write the legacy GLOBAL kv_store['ni:wl'] key, but the scan
-  // universe now reads the PER-USER `watchlists` table (Phase 2 step 4), so both were
-  // writing to a dead key that nothing reads — a no-op that only cost DB round-trips.
-  // Removed to stop the dead writes; the brief's exchange-scoped stale detection
-  // (brief.stale) is still computed and returned, just not acted on here.
+  // 4. Watchlist auto-promotion — REINSTATED into the GLOBAL system_watchlist.
+  // Symbols repeatedly parked on the "watch" side (HOLD) across the recent window are
+  // promoted into the curated universe so the agent keeps monitoring them (and they
+  // surface on Today when they later flip to BUY/SELL). Runs best-effort in the
+  // background block below (its own try/catch) so it can never throw into the brief
+  // flow. Gated on settings.auto_promote_on (default on) + the schema-flag probe.
   //
-  // TODO: auto-promotion under multi-tenancy needs a product decision — either a
-  // system/seed watchlist that feeds the scan union (a global row set the operator
-  // curates), or drop auto-promotion entirely and let the union be user watchlists +
-  // discovery only. Note the gap: intraday light scans have NO watchlist to scan
-  // until users add symbols, or the operator's old watchlist is migrated into the
-  // per-user `watchlists` table.
+  // NOTE (auto-PRUNE / auto-remove is NOT reinstated): the legacy pruneWatchlist wrote
+  // the dead kv_store['ni:wl'] key. Auto-removal from a SHARED curated list is a
+  // different product decision (a symbol one user finds stale another may still want),
+  // so the Settings "Auto-Remove" control stays inactive for now.
+  const settings = await loadSettings(supabase);
+  const promoExchange = scan?.exchange || 'NEPSE';
 
   // 5. Mark the scan done / partial.
   const status = failures.length > 0 || skipped.length > 0 ? 'partial' : 'done';
@@ -166,6 +169,21 @@ export const POST = withGuard(async (request) => {
     } catch (err) {
       console.error('deliverSignalAlerts failed:', err?.message || err);
     }
+    // Auto-promotion into the GLOBAL system_watchlist. Own try/catch so a failure here
+    // (or an unmigrated DB) never breaks the brief/outcome flow. No market/LLM I/O in
+    // the hot path beyond one liquidity-board read at write time.
+    try {
+      if (settings.auto_promote_on !== false && (await systemWatchlistReady())) {
+        await promoteToSystemWatchlist(supabase, {
+          exchange: promoExchange,
+          settings,
+          hasExchangeCol,
+          scanId,
+        });
+      }
+    } catch (err) {
+      console.error('promoteToSystemWatchlist failed:', err?.message || err);
+    }
   });
 
   return NextResponse.json({
@@ -179,6 +197,80 @@ export const POST = withGuard(async (request) => {
   });
 });
 
+async function loadSettings(supabase) {
+  const { data } = await supabase
+    .from('kv_store')
+    .select('value')
+    .eq('key', KV.SETTINGS)
+    .maybeSingle();
+  return data?.value || {};
+}
+
+// Reinstated auto-promotion INTO the GLOBAL system_watchlist. Tally HOLD signals over
+// the recent scan window (this exchange), pick the symbols that appear at least
+// watch_promote_min times, liquidity-filter them at write time, and SERVICE-upsert the
+// survivors as source:'discovery'. Best-effort — the caller wraps this in its own
+// try/catch; every side-channel step (event log) is swallowed. GLOBAL list: NO user_id,
+// symbols only (never prices), service client (RLS is public-read/service-write).
+async function promoteToSystemWatchlist(supabase, { exchange, settings, hasExchangeCol, scanId }) {
+  // 1. Resolve the recent scan window (this exchange when the column exists).
+  let scanQuery = supabase
+    .from('scans')
+    .select('id')
+    .order('started_at', { ascending: false })
+    .limit(SIGNAL_HISTORY_SCANS);
+  if (hasExchangeCol) scanQuery = scanQuery.eq('exchange', exchange);
+  const { data: recentScans } = await scanQuery;
+  const scanIds = (recentScans || []).map((s) => s.id).filter((id) => id != null);
+  if (!scanIds.length) return;
+
+  // 2. Tally HOLD appearances per symbol across those scans.
+  const { data: holdRows } = await supabase
+    .from('signals')
+    .select('symbol')
+    .eq('signal', 'HOLD')
+    .in('scan_id', scanIds);
+  const counts = {};
+  for (const row of holdRows || []) {
+    const sym = String(row?.symbol || '').toUpperCase().trim();
+    if (!sym) continue;
+    counts[sym] = (counts[sym] || 0) + 1;
+  }
+
+  // 3. Pick candidates over the threshold, then liquidity-filter at write time.
+  const minAppearances = settings.watch_promote_min ?? WATCH_PROMOTE_MIN;
+  const candidates = selectPromotions(counts, { minAppearances });
+  if (!candidates.length) return;
+  const survivors = filterLiquidSymbols(candidates, await getLiquidityBoard(), resolveMinTurnover(settings));
+  if (!survivors.length) return;
+
+  // 4. INSERT only genuinely NEW survivors as curated 'discovery' rows. ADDITIVE-ONLY
+  // (ignoreDuplicates → INSERT ... ON CONFLICT DO NOTHING): promotion must NEVER
+  // reactivate a symbol an admin deactivated, nor overwrite a 'seed'/'admin' row's
+  // source/active. An existing row (any source, active or not) is left untouched; only
+  // symbols not already in the list are added. Admin curation stays authoritative.
+  const now = new Date().toISOString();
+  const rows = survivors.map((symbol) => ({
+    symbol,
+    exchange,
+    source: 'discovery',
+    active: true,
+    updated_at: now,
+  }));
+  const { error } = await supabase
+    .from('system_watchlist')
+    .upsert(rows, { onConflict: 'exchange,symbol', ignoreDuplicates: true });
+  if (error) throw error;
+
+  // Best-effort event log (side-channel; never throws into the flow).
+  await logEvent(supabase, {
+    scanId,
+    type: 'watch_promoted',
+    message: `Promoted ${survivors.length} symbol${survivors.length === 1 ? '' : 's'} to the curated watchlist — ${survivors.join(', ')}`,
+    data: { exchange, promoted: survivors, minAppearances },
+  });
+}
+
 async function loadPortfolio(supabase) {
   const { data } = await supabase
     .from('kv_store')
@@ -190,8 +282,9 @@ async function loadPortfolio(supabase) {
   return Array.isArray(v?.positions) ? v.positions : [];
 }
 
-// NOTE (B3): promoteWatchlist()/pruneWatchlist() were removed here. Both read/wrote
-// the legacy GLOBAL kv_store['ni:wl'] watchlist, which no part of the multi-tenant
-// app reads any more — the scan universe is the union of the per-user `watchlists`
-// table (Phase 2 step 4). They were dead writes. See the TODO at the call site
-// (step 4/4b) for the auto-promotion product decision still owed.
+// NOTE: the legacy promoteWatchlist()/pruneWatchlist() (which wrote the dead GLOBAL
+// kv_store['ni:wl'] key) are gone. Auto-PROMOTION is reinstated as
+// promoteToSystemWatchlist() above — it writes the GLOBAL `system_watchlist` table (the
+// scan union's curated seed), not a per-user list. Auto-PRUNE was NOT reinstated:
+// removing a symbol from a SHARED curated list on one signal's "staleness" is a
+// different product decision, so the Settings "Auto-Remove" control stays inactive.

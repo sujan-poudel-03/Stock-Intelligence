@@ -124,6 +124,10 @@ function normalizeSig(s) {
 
 // -- constants (from V1) ------------------------------------------------------
 var SIG_COLORS = { BUY: '#10b981', SELL: '#ef4444', WATCH: '#f59e0b', AVOID: '#64748b', HOLD: '#f59e0b', NEUTRAL: '#64748b' };
+// Watchlist provenance colors. Owned-row sources (manual/discovered/holding) + the
+// GLOBAL curated-list sources (seed/admin/discovery/system) share this map.
+var SRC_COLORS = { discovered: '#a78bfa', holding: '#8b5cf6', discovery: '#a78bfa', admin: '#3b82f6', seed: '#10b981', system: '#10b981' };
+function srcColor(src) { return SRC_COLORS[src] || '#4a5568'; }
 var DEFAULT_SETTINGS = {
   discovery_on: true,
   discovery_depth: 8,
@@ -229,6 +233,7 @@ export default function NepseApp() {
   const [stockCache, setStockCache] = useState({});
   const [watchlist, setWatchlist] = useState([]);
   const [wlSources, setWlSources] = useState({}); // { SYMBOL: 'manual'|'discovered'|'holding' }
+  const [systemWatchlist, setSystemWatchlist] = useState([]); // GLOBAL curated list [{ symbol, source }]
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [alertPrefs, setAlertPrefs] = useState({ channels: {}, thresholds: {} }); // per-user alert prefs
 
@@ -256,6 +261,7 @@ export default function NepseApp() {
 
   // UI misc
   const [wlInput, setWlInput] = useState('');
+  const [sysWlInput, setSysWlInput] = useState(''); // admin: add-to-curated-list input
   const [toasts, setToasts] = useState([]);
   const [logs, setLogs] = useState([]); // ephemeral local notices
   const [showLog, setShowLog] = useState(false);
@@ -572,6 +578,18 @@ export default function NepseApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.loading, auth.configured, auth.signedIn, exchange]);
 
+  // Load the GLOBAL curated/seed watchlist (per-exchange). PUBLIC — runs regardless of
+  // auth mode (even signed-out / gated), because it is shared market data, not per-user
+  // state: signed-out and new users still see the curated universe the agent scans for
+  // everyone. Empty on an unmigrated DB (the route returns []), so this is a no-op then.
+  useEffect(() => {
+    let alive = true;
+    store.loadSystemWatchlist(exchange)
+      .then(function (rows) { if (alive) setSystemWatchlist(rows); })
+      .catch(function () { if (alive) setSystemWatchlist([]); });
+    return function () { alive = false; };
+  }, [exchange]);
+
   // Load the agent's real track record the first time the tab is opened.
   useEffect(() => {
     if (tab === 'track' && !track) loadTrack();
@@ -652,6 +670,26 @@ export default function NepseApp() {
       startPolling();
     } catch (e) { addLog('retry failed: ' + e.message, 'err'); }
   }, [addLog, startPolling]);
+
+  // Admin curation of the GLOBAL system watchlist (add / deactivate). ADMIN-only in the
+  // UI; the endpoint re-enforces requireAdmin server-side (403 for non-admins). Reloads
+  // the curated list on success so the section reflects the change.
+  const curateSystemWatch = useCallback(async (action, symbol) => {
+    const sym = String(symbol || '').toUpperCase().trim();
+    if (!sym) return;
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/system-watchlist', {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
+        body: JSON.stringify({ exchange: exchange, symbol: sym, action: action }),
+      });
+      if (res.status === 403) { showToast('Admin only', 'err'); return; }
+      if (!res.ok) { showToast('Curate failed', 'err'); return; }
+      const rows = await store.loadSystemWatchlist(exchange);
+      setSystemWatchlist(rows);
+    } catch (e) { addLog('curate failed: ' + e.message, 'err'); }
+  }, [exchange, addLog, showToast]);
 
   // -- stock overlay (server) -------------------------------------------------
   function openStock(sym) {
@@ -1358,6 +1396,53 @@ export default function NepseApp() {
                 </div>
               )}
 
+              {/* GLOBAL curated/seed watchlist — the universe the agent scans for EVERYONE.
+                  A DISTINCT section (never merged into the user's owned rows), shown in all
+                  states (gated / empty / populated) so signed-out and new users still see it.
+                  Admins get inline add/deactivate; everyone else sees it read-only. */}
+              {(systemWatchlist.length > 0 || auth.isAdmin) && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 600, marginBottom: 2 }}>Curated watchlist (scanned for everyone)</div>
+                  <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8, lineHeight: 1.6 }}>A global list the agent monitors for all users — separate from your own watchlist above.</div>
+                  {auth.isAdmin && (
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      <input value={sysWlInput} onChange={function (e) { setSysWlInput(e.target.value.toUpperCase()); }} onKeyDown={function (e) { if (e.key === 'Enter') { curateSystemWatch('add', sysWlInput); setSysWlInput(''); } }} placeholder="admin: add to curated list…" style={{ flex: 1 }} />
+                      <button onClick={function () { curateSystemWatch('add', sysWlInput); setSysWlInput(''); }} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #3b82f6', background: 'transparent', color: '#3b82f6', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', flexShrink: 0 }}>add</button>
+                    </div>
+                  )}
+                  {systemWatchlist.length === 0 ? (
+                    <div style={{ fontSize: 11, color: '#4a5568', padding: '8px 0' }}>No curated symbols yet for this market.</div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 6 }}>
+                      {systemWatchlist.map(function (row) {
+                        var sym = row.symbol;
+                        var sig = signals.find(function (s) { return s.symbol === sym; });
+                        var sc = sig ? (SIG_COLORS[sig.signal] || '#4a5568') : '#1c2333';
+                        var srcC = srcColor(row.source);
+                        var lp = sig && sig.live ? sig.live.price : null;
+                        return (
+                          <div key={'sys-' + sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
+                              {auth.isAdmin && <button onClick={function () { curateSystemWatch('deactivate', sym); }} title="deactivate (admin)" style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                              <span style={{ fontSize: 8, color: srcC }}>{row.source}</span>
+                            </div>
+                            {sig ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 5px', borderRadius: 2 }}>{sig.signal}</span>
+                                {lp && <span style={{ fontSize: 9, color: '#4a5568' }}>{'Rs' + lp}</span>}
+                              </div>
+                            ) : <span style={{ fontSize: 9, color: '#4a5568' }}>{running && scanSym === sym ? 'scanning...' : 'pending'}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {gated ? (
                 <SignInPrompt title="Sign in to build your watchlist" sub="Track the symbols you care about — the agent scans your watchlist every run. Viewing signals and the track record stays free." onSignIn={auth.signIn} />
               ) : (
@@ -1374,7 +1459,7 @@ export default function NepseApp() {
                     var sig = signals.find(function (s) { return s.symbol === sym; });
                     var sc = sig ? (SIG_COLORS[sig.signal] || '#4a5568') : '#1c2333';
                     var src = wlSources[sym] || 'manual';
-                    var srcColor = src === 'discovered' ? '#a78bfa' : src === 'holding' ? '#8b5cf6' : '#4a5568';
+                    var srcC = srcColor(src);
                     var lp = sig && sig.live ? sig.live.price : null;
                     return (
                       <div key={sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
@@ -1383,7 +1468,7 @@ export default function NepseApp() {
                           <button onClick={function () { removeFromWatchlist(sym); }} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-                          <span style={{ fontSize: 8, color: srcColor }}>{src}</span>
+                          <span style={{ fontSize: 8, color: srcC }}>{src}</span>
                         </div>
                         {sig ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -1526,7 +1611,7 @@ export default function NepseApp() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Auto-add threshold</div>
-                    <div style={{ fontSize: 10, color: '#4a5568', marginTop: 2 }}>Which signal strength triggers auto-add to watchlist (inactive in this version)</div>
+                    <div style={{ fontSize: 10, color: '#4a5568', marginTop: 2 }}>Repeatedly-watched (HOLD) symbols are auto-promoted into the curated watchlist scanned for everyone</div>
                   </div>
                   <SegBtn value={settings.autoadd_threshold} options={[['BUY', 'BUY only'], ['BUY_WATCH', 'BUY + WATCH']]} onChange={function (v) { saveSettings(Object.assign({}, settings, { autoadd_threshold: v })); }} />
                 </div>

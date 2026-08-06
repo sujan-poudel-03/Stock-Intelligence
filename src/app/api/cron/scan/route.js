@@ -3,7 +3,8 @@ import { getServiceSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery } from '@/lib/scan';
 import { normalizeExchange } from '@/lib/exchanges';
 import { unionWatchlistSymbols } from '@/lib/watchlistUnion';
-import { exchangeColumnReady } from '@/lib/schemaFlags';
+import { buildScanUniverse } from '@/lib/systemWatchlist';
+import { exchangeColumnReady, systemWatchlistReady } from '@/lib/schemaFlags';
 import { triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { withGuard } from '@/lib/respond';
@@ -217,7 +218,23 @@ async function loadWatchlist(supabase, exchange) {
       .select('symbol')
       .eq('exchange', exchange);
     if (error) throw error;
-    return unionWatchlistSymbols(data || []);
+    const userSymbols = unionWatchlistSymbols(data || []);
+
+    // GLOBAL system/seed watchlist: ONE extra global read (no market/LLM I/O) folds the
+    // curated universe into the scan union, so the scan is never starved when discovery
+    // is empty and no user has added a symbol. Gated on the schema-flag probe — an
+    // unmigrated DB skips this entirely and behaves byte-for-byte as before. Any error
+    // in this block falls through to the outer catch (user rows only), exactly as today.
+    if (await systemWatchlistReady()) {
+      const { data: sysRows, error: sysErr } = await supabase
+        .from('system_watchlist')
+        .select('symbol')
+        .eq('exchange', exchange)
+        .eq('active', true);
+      if (sysErr) throw sysErr;
+      return buildScanUniverse({ userRows: data || [], systemRows: sysRows || [] });
+    }
+    return userSymbols;
   } catch (err) {
     console.warn('[scan] watchlist union unavailable, scanning discovery only:', err?.message || err);
     return [];

@@ -118,6 +118,28 @@ export async function removeWatchlist(mode, exchange, symbol) {
   }
 }
 
+// ---- system / seed watchlist (GLOBAL, public) -------------------------------
+// The curated universe scanned for everyone. PUBLIC read — no auth, no mode: it is
+// global market data (public-read RLS), so it loads regardless of sign-in state (even
+// when per-user features are gated). Returns [{ symbol, source }]; empty on any miss
+// (including an unmigrated DB, which the route reports as an empty list, not an error).
+export async function loadSystemWatchlist(exchange) {
+  try {
+    const res = await fetch('/api/system-watchlist?exchange=' + encodeURIComponent(exchange), {
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const d = await res.json();
+    return Array.isArray(d.systemWatchlist)
+      ? d.systemWatchlist
+          .map((r) => ({ symbol: String(r?.symbol || '').toUpperCase().trim(), source: r?.source || 'system' }))
+          .filter((r) => r.symbol)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 // ---- portfolio (rows in portfolios column shape) ----------------------------
 export async function loadPortfolio(mode) {
   if (mode === 'api') {

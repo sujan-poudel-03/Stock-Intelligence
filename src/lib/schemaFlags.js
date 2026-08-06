@@ -155,3 +155,32 @@ export function __resetAlertDeliveryProbe() {
   alertDeliveryProbe = null;
   outcomeDeliveryProbe = null;
 }
+
+// --- Global system/seed watchlist ------------------------------------------
+// Same discipline as corporateActionsReady: until 20260809000000_system_watchlist.sql
+// is applied, touching the `system_watchlist` table would ERROR. Every read/write of
+// the curated universe (scan union, brief promotion, admin/public routes) is gated on
+// this probe so an unmigrated DB behaves byte-for-byte as today (scan union = user
+// watchlists + discovery only, blank curated section, no auto-promotion).
+
+let systemWatchlistProbe = null;
+
+// systemWatchlistReady(): true when the global `system_watchlist` table exists.
+export async function systemWatchlistReady() {
+  if (systemWatchlistProbe) return systemWatchlistProbe;
+  systemWatchlistProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('system_watchlist').select('symbol').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return systemWatchlistProbe;
+}
+
+// Test-only: reset the memoized system-watchlist probe.
+export function __resetSystemWatchlistProbe() {
+  systemWatchlistProbe = null;
+}

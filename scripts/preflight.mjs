@@ -71,6 +71,7 @@ const EXPECTED_TABLES = [
   'events',
   'knowledge',
   'corporate_actions', // TIER-1 #1 global corporate-action awareness (bonus/rights/div ex-dates)
+  'system_watchlist', // GLOBAL curated/seed watchlist that seeds the scan union (public-read/service-write)
   // Phase 2 per-user tables (thin per-user layer; RLS added in a later step).
   'watchlists',
   'user_settings',
