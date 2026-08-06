@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/useAuth';
 import { getAccessToken } from '@/lib/authClient';
 import useBreakpoint from '@/hooks/useBreakpoint';
 import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
+import { maskEmail, asOfLabel, channelNeedsSetup } from '@/lib/format';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -30,6 +31,11 @@ import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 // ============================================================================
 
 const POLL_MS = 5000;
+// Client-side stall watchdog: if the scan's completed count doesn't advance for this
+// long while running, surface a stalled state + retry instead of polling silently
+// forever. Slightly tighter than the server's STALL_MS (2 min) so the user sees it
+// promptly; the server flag (status.stalled) also trips the same UI.
+const CLIENT_STALL_MS = 90000;
 
 // -- charge engine (verbatim from V1) -----------------------------------------
 function calcC(action, qty, price, buyPrice, holdDays) {
@@ -214,6 +220,8 @@ export default function NepseApp() {
   const [activity, setActivity] = useState([]);
   const [track, setTrack] = useState(null);
   const [scanStarting, setScanStarting] = useState(false);
+  const [scanStalled, setScanStalled] = useState(false); // client watchdog: scan frozen w/ no progress
+  const [channels, setChannels] = useState(null); // alert-channel deliverability (/api/channels)
 
   // Client-side bookkeeping
   const [portfolio, setPortfolio] = useState([]);
@@ -256,6 +264,7 @@ export default function NepseApp() {
   const pollRef = useRef(null);
   const lastSymbolRef = useRef(null);
   const sidebarEnd = useRef(null);
+  const progressRef = useRef({ completed: -1, since: 0 }); // last progress count + when it advanced
 
   // -- derived ----------------------------------------------------------------
   var openPos = portfolio.filter(function (p) { return p.status === 'OPEN'; });
@@ -279,6 +288,13 @@ export default function NepseApp() {
   const failedJobs = (status && status.failed_jobs) || [];
   const skippedJobs = (status && status.skipped_jobs) || [];
   const isPartial = status && status.status === 'partial';
+  // Alert-channel deliverability lookup (id -> { configured, requiresEnv, ... }) so a
+  // toggled-on-but-unconfigured channel can warn the user. Empty until /api/channels
+  // resolves — the warning simply doesn't show while unknown.
+  const channelMap = {};
+  (channels || []).forEach(function (c) { channelMap[c.id] = c; });
+  // Scan is considered stalled when the client watchdog trips OR the server says so.
+  const stalled = running && (scanStalled || !!(status && status.stalled));
 
   // -- helpers ----------------------------------------------------------------
   const addLog = useCallback(function (msg, type) {
@@ -408,6 +424,23 @@ export default function NepseApp() {
       setStatus(data);
       if (data.market) setMarket(normalizeMarket(data.market));
 
+      // Stall watchdog: track the completed count + when it last advanced. If it stops
+      // moving (or the server flags stalled) we surface a retry instead of polling
+      // silently forever. Reset the watchdog whenever progress is made or the scan ends.
+      if (data.running) {
+        var completed = data.completed || 0;
+        var pr = progressRef.current;
+        if (completed !== pr.completed) {
+          progressRef.current = { completed: completed, since: Date.now() };
+          setScanStalled(false);
+        } else if (data.stalled || (pr.since && Date.now() - pr.since > CLIENT_STALL_MS)) {
+          setScanStalled(true);
+        }
+      } else {
+        progressRef.current = { completed: -1, since: 0 };
+        setScanStalled(false);
+      }
+
       if (data.current_symbol && data.current_symbol !== lastSymbolRef.current) {
         lastSymbolRef.current = data.current_symbol;
         loadActivity();
@@ -423,6 +456,10 @@ export default function NepseApp() {
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
+    // Fresh polling session: reset the stall watchdog so a prior run's freeze state
+    // doesn't leak into this one.
+    progressRef.current = { completed: -1, since: Date.now() };
+    setScanStalled(false);
     pollStatus();
     pollRef.current = setInterval(pollStatus, POLL_MS);
   }, [pollStatus]);
@@ -432,7 +469,9 @@ export default function NepseApp() {
     (async () => {
       // GLOBAL / device-local reads only — NEVER per-user data here (that loads in a
       // separate auth-keyed effect, and never triggers a scan/fetch).
-      //   ni:brief, ni:mkt   -> global, still on /api/storage
+      //   ni:brief, ni:mkt   -> global, still on /api/storage. NOTE: ni:mkt is a dead
+      //     read (never written) — the live last-known market now hydrates from
+      //     /api/scan/status (data.market fallback) below; kept only as harmless legacy.
       //   ni:chat, ni:sc     -> device-local (was the leaky shared kv)
       //   global discovery cfg -> /api/admin/settings (open read)
       const [mkt, b, gs] = await Promise.all([dbGet('ni:mkt'), dbGet('ni:brief'), store.loadGlobalSettings()]);
@@ -459,6 +498,14 @@ export default function NepseApp() {
           setExAvail(avail);
         }
       } catch (e) { /* keep NEPSE-only default */ }
+
+      // Alert-channel deliverability (server-gated booleans + env names, no secrets).
+      // Best-effort: on failure the alert-config warning simply doesn't render.
+      try {
+        const chRes = await fetch('/api/channels', { cache: 'no-store' });
+        const chData = await chRes.json();
+        if (Array.isArray(chData.channels)) setChannels(chData.channels);
+      } catch (e) { /* non-blocking: warning just won't show */ }
 
       // First run (no saved market preference): ask which market to trade.
       if (!hasExchangePref) setShowOnboard(true);
@@ -581,6 +628,27 @@ export default function NepseApp() {
     addLog('retrying ' + symbol + '…', 'api');
     try {
       await fetch('/api/scan/worker?symbol=' + encodeURIComponent(symbol) + '&force=true', { method: 'POST' });
+      startPolling();
+    } catch (e) { addLog('retry failed: ' + e.message, 'err'); }
+  }, [addLog, startPolling]);
+
+  // Nudge a stalled scan: resume through the ADMIN-gated endpoint (with the admin
+  // bearer), which re-pokes the CRON_SECRET-guarded worker server-side to reclaim
+  // stale-running jobs and resume the self-chain. Going straight to /api/scan/worker
+  // 401s in production (the browser has no CRON_SECRET), so route it like scanNow.
+  // The retry button is already admin-only in the UI. Clears the watchdog so the stall
+  // banner hides until it trips again.
+  const retryScan = useCallback(async () => {
+    addLog('nudging stalled scan…', 'api');
+    setScanStalled(false);
+    progressRef.current = { completed: -1, since: Date.now() };
+    try {
+      const token = await getAccessToken();
+      await fetch('/api/admin/scan', {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
+        body: JSON.stringify({ resume: true }),
+      });
       startPolling();
     } catch (e) { addLog('retry failed: ' + e.message, 'err'); }
   }, [addLog, startPolling]);
@@ -763,7 +831,10 @@ export default function NepseApp() {
             </div>
           )}
           <div className="topbar-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            {running && <span style={{ fontSize: 10, color: '#f59e0b', fontFamily: 'IBM Plex Mono,monospace' }}>{progressLabel}{status.stalled ? ' (stalled)' : ''}</span>}
+            {running && <span style={{ fontSize: 10, color: stalled ? '#ef4444' : '#f59e0b', fontFamily: 'IBM Plex Mono,monospace' }}>{progressLabel}{stalled ? ' (stalled)' : ''}</span>}
+            {stalled && auth.isAdmin && (
+              <button onClick={retryScan} style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid #ef4444', background: '#ef444415', color: '#ef4444', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>retry</button>
+            )}
             {openPos.length > 0 && <span style={{ fontSize: 10, color: '#4a5568', fontFamily: 'Inter,sans-serif' }}>{openPos.length + ' open'}</span>}
             {realisedPL !== 0 && <span style={{ fontSize: 10, fontWeight: 500, color: realisedPL >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{signed(realisedPL)}</span>}
             {/* Scan is an admin/system action (triggers the ONE global scan) —
@@ -778,7 +849,7 @@ export default function NepseApp() {
               <button onClick={auth.signIn} title="Sign in to save your watchlist and positions" style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid #3b82f6', background: '#3b82f615', color: '#3b82f6', fontSize: 10, cursor: 'pointer', fontFamily: 'Inter,sans-serif', fontWeight: 600 }}>Sign in</button>
             )}
             {auth.configured && auth.signedIn && auth.email && (
-              <button onClick={function () { setTab('settings'); }} title={auth.email} style={{ width: 24, height: 24, borderRadius: '50%', border: '1px solid #3b82f633', background: '#3b82f618', color: '#3b82f6', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{auth.email[0].toUpperCase()}</button>
+              <button onClick={function () { setTab('settings'); }} title={maskEmail(auth.email)} style={{ width: 24, height: 24, borderRadius: '50%', border: '1px solid #3b82f633', background: '#3b82f618', color: '#3b82f6', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{auth.email[0].toUpperCase()}</button>
             )}
           </div>
         </div>
@@ -863,6 +934,18 @@ export default function NepseApp() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* stalled-scan banner — a RUNNING scan whose progress has frozen. Surfaces the
+          stall (instead of an endless silent poll) + a retry that re-pokes the worker.
+          Non-admins see the message only; the auto-reclaim path still runs server-side. */}
+      {stalled && (
+        <div style={{ background: '#3a1a1a', borderBottom: '1px solid #ef444455', color: '#ef4444', padding: '8px 16px', fontSize: 11, fontFamily: 'Inter,sans-serif', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>{'⚠ Scan appears stalled — no progress at ' + (progressLabel || '0/0') + '.'}</span>
+          {auth.isAdmin
+            ? <button onClick={retryScan} style={{ fontSize: 10, color: '#ef4444', background: '#ef444418', border: '1px solid #ef4444', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>retry now</button>
+            : <span style={{ color: '#f59e0b' }}>It will retry automatically.</span>}
         </div>
       )}
 
@@ -1128,6 +1211,10 @@ export default function NepseApp() {
                         <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{'Rs ' + d.price}</span>
                         {d.change_pct != null && <span style={{ fontSize: 10, color: d.change_pct >= 0 ? '#10b981' : '#ef4444' }}>{toPct(d.change_pct)}</span>}
                         {(d.pe != null || d.eps != null) && <span style={{ fontSize: 9, color: '#4a5568' }}>{(d.eps != null ? 'EPS ' + d.eps + ' ' : '') + (d.pe != null ? 'PE ' + d.pe : '')}</span>}
+                        {/* Freshness of the VERIFIED quote (ground-truth provenance): when it
+                            was read + a stale flag for a late-but-true (accepted) price. */}
+                        {d.asOf != null && <span style={{ fontSize: 9, color: '#4a5568', marginLeft: 'auto' }}>{asOfLabel(d.asOf)}</span>}
+                        {d.stale && <span style={{ fontSize: 8, color: '#f59e0b', background: '#f59e0b18', padding: '1px 5px', borderRadius: 2 }}>stale</span>}
                       </div>
                     )}
                     <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
@@ -1371,10 +1458,21 @@ export default function NepseApp() {
                     </div>
                   </div>
                   {[['email', 'Email'], ['telegram', 'Telegram']].map(function (c) {
+                    var chInfo = channelMap[c[0]];
+                    var needsSetup = chInfo && channelNeedsSetup(!!alertPrefs.channels[c[0]], chInfo.configured);
                     return (
-                      <div key={c[0]} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
-                        <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{c[1]}</div>
-                        <ToggleBtn on={!!alertPrefs.channels[c[0]]} onClick={function () { toggleAlertChannel(c[0]); }} />
+                      <div key={c[0]} style={{ padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{c[1]}</div>
+                          <ToggleBtn on={!!alertPrefs.channels[c[0]]} onClick={function () { toggleAlertChannel(c[0]); }} />
+                        </div>
+                        {/* Non-blocking warning: the toggle still works, but the channel can't
+                            deliver until an admin sets its server env (deliverability from /api/channels). */}
+                        {needsSetup && (
+                          <div style={{ marginTop: 6, fontSize: 9, color: '#f59e0b', fontFamily: 'Inter,sans-serif', lineHeight: 1.5 }}>
+                            {c[1] + " isn't set up on the server yet — alerts won't send until an admin configures " + (chInfo.requiresEnv || []).join(' + ') + '.'}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

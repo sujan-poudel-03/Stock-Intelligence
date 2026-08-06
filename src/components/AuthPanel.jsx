@@ -1,5 +1,7 @@
 'use client';
 
+import { maskEmail } from '@/lib/format';
+
 // Account panel (Settings). Shows Google sign-in / the signed-in identity + role.
 // Rendered only when auth is configured; in open mode there's no auth infra so it
 // stays hidden and the app behaves as single-operator.
@@ -15,7 +17,7 @@ export default function AuthPanel({ auth }) {
           {auth.email[0].toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{auth.email}</div>
+          <div title={maskEmail(auth.email)} style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{maskEmail(auth.email)}</div>
           <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '.04em', color: auth.isAdmin ? '#10b981' : '#4a5568', background: (auth.isAdmin ? '#10b981' : '#4a5568') + '20', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{auth.isAdmin ? 'ADMIN' : 'USER'}</span>
         </div>
         <button onClick={auth.signOut} style={{ fontSize: 10, color: '#4a5568', background: 'none', border: '1px solid #1e2840', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Sign out</button>

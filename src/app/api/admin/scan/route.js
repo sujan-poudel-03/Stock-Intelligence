@@ -22,9 +22,14 @@ export const POST = withGuard(async (request) => {
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
 
   const body = await request.json().catch(() => ({}));
-  const { path } = normalizeScanParams(body);
 
-  // Build the internal cron URL on THIS origin so the self-call hits the port the
+  // Two admin actions share this endpoint (both need the CRON_SECRET the browser can't
+  // see): a fresh scan (default) and RESUME — re-poking the worker to reclaim stale
+  // jobs and continue the self-chain when a scan has stalled. The worker is also
+  // CRON_SECRET-guarded, so the resume can't go straight from the browser either.
+  const path = body?.resume ? '/api/scan/worker' : normalizeScanParams(body).path;
+
+  // Build the internal URL on THIS origin so the self-call hits the port the
   // server actually bound to (dev bumps to 3001+ when 3000 is taken). Attach the
   // CRON_SECRET exactly the way checkCronAuth expects; when it's unset the cron
   // route allows the call (single-operator/dev).

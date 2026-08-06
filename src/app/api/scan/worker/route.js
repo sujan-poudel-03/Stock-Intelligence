@@ -10,7 +10,7 @@ import { runBackground, triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { humanizeError } from '@/lib/humanizeError';
 import { withGuard } from '@/lib/respond';
-import { STALE_JOB_MS, MAX_ATTEMPTS, checkCronAuth } from '@/lib/constants';
+import { STALE_JOB_MS, MAX_ATTEMPTS, SCAN_JOB_TIMEOUT_MS, checkCronAuth } from '@/lib/constants';
 import { remaining } from '@/lib/budget';
 
 // A full stock scan costs 1 LLM call (a single grounded fetch + signal call).
@@ -155,7 +155,16 @@ async function processJob(supabase, job, origin) {
     await supabase.from('scans').update({ current_symbol: job.symbol }).eq('id', scanId);
 
     const weightCtx = await getWeightContext(job.symbol, null, exchange);
-    const signal = await scanOneStock(job.symbol, scan?.market || {}, weightCtx, null, { exchange });
+    // Bound the scan work: a hung LLM generation / grounded fetch would otherwise
+    // freeze the worker forever (only llmPing has its own AbortController). On timeout
+    // this throws a plain (retryable) error — it lands on the retry path below, not
+    // the 'no data from source' fail-fast, and NOT the fail-closed price guard (that
+    // still lives inside scanOneStock). The success path is untouched.
+    const signal = await withTimeout(
+      scanOneStock(job.symbol, scan?.market || {}, weightCtx, null, { exchange }),
+      SCAN_JOB_TIMEOUT_MS,
+      job.symbol
+    );
 
     await insertSignal(supabase, scanId, signal);
 
@@ -219,6 +228,18 @@ async function processJob(supabase, job, origin) {
 
   // Chain: more work -> next worker; otherwise -> brief.
   await chainNext(supabase, scanId, origin);
+}
+
+// Race a promise against a timeout so a hung external call can't block the worker
+// indefinitely. Rejects with a plain Error (retryable) on timeout; the underlying
+// promise is left to settle on its own (the function's maxDuration reaps it). The
+// timer is always cleared so a fast-resolving job doesn't hold the event loop.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`scan timed out after ${Math.round(ms / 1000)}s: ${label}`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 // Persist one signal row. Shared by the normal path and budget-saver fallback.

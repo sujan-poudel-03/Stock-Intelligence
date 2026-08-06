@@ -64,6 +64,11 @@ export const SCAN_GUARD_MS = 30 * 60 * 1000; // skip new scan if one started < 3
 export const STALE_JOB_MS = 90 * 1000; // reclaim running jobs older than 90s
 export const STALL_MS = 2 * 60 * 1000; // status considers scan stalled after 2 min no progress
 export const MAX_ATTEMPTS = 3; // per-job retry ceiling
+// Per-job hard cap for the scan work (LLM generation + grounded fetch). A hung
+// external call would otherwise block the worker forever — never failing, retrying,
+// or chaining. Kept safely under the route's maxDuration=60 so a timed-out job still
+// fails cleanly (retryable) within the function budget.
+export const SCAN_JOB_TIMEOUT_MS = 45 * 1000;
 
 // Watchlist auto-promotion. A symbol seen on the "watch" side (HOLD) across at
 // least WATCH_PROMOTE_MIN of the last SIGNAL_HISTORY_SCANS scans is auto-added to

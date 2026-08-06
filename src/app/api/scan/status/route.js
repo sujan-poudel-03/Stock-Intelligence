@@ -33,6 +33,7 @@ export const GET = withGuard(async () => {
       failed_jobs: [],
       skipped_jobs: [],
       market: null,
+      market_as_of: null,
       last_updated: null,
       last_scan_at: null,
       last_scan_status: null,
@@ -69,6 +70,31 @@ export const GET = withGuard(async () => {
     running && lastUpdated ? Date.now() - new Date(lastUpdated).getTime() > STALL_MS : false;
   const etaMinutes = running ? Math.ceil((remaining * 25) / 60) : 0;
 
+  // Last-known market fallback. On mount the latest scan's `market` is often null/{}
+  // (a pending/running scan hasn't computed it yet), which leaves the header index
+  // chip blank. Fall back to the most recent scan that DID record a market so the
+  // client always hydrates last-known. Best-effort + bounded; the running/progress
+  // fields above still reflect the CURRENT scan.
+  let market = hasMarketData(scan.market) ? scan.market : null;
+  let marketAsOf = market ? scan.completed_at || scan.started_at : null;
+  if (!market) {
+    try {
+      const { data: recent } = await supabase
+        .from('scans')
+        .select('market, completed_at, started_at')
+        .not('market', 'is', null)
+        .order('started_at', { ascending: false })
+        .limit(5);
+      const withMkt = (recent || []).find((r) => hasMarketData(r.market));
+      if (withMkt) {
+        market = withMkt.market;
+        marketAsOf = withMkt.completed_at || withMkt.started_at;
+      }
+    } catch {
+      /* best-effort: a fallback read failure just leaves the chip blank, never 500s */
+    }
+  }
+
   return NextResponse.json({
     running,
     status: scan.status,
@@ -89,14 +115,22 @@ export const GET = withGuard(async () => {
       return { symbol: j.symbol, kind: h.kind, message: h.message };
     }),
     // Latest market read (index / sentiment / gainers / losers) so the Today tab
-    // can render the market header + movers without a separate fetch.
-    market: scan.market || null,
+    // can render the market header + movers without a separate fetch. Falls back to
+    // the last scan that recorded a market (see above) so it's never blank on mount.
+    market,
+    market_as_of: marketAsOf,
     last_updated: lastUpdated,
     last_scan_at: scan.completed_at || scan.started_at,
     last_scan_status: scan.status,
     next_scheduled: nextScanRunIso(),
   });
 });
+
+// A scan's `market` is a real reading only when it's a non-empty object — a pending
+// scan often has null or {} until the market phase completes.
+function hasMarketData(m) {
+  return !!m && typeof m === 'object' && Object.keys(m).length > 0;
+}
 
 function latestTimestamp(scan, jobs) {
   const stamps = [scan.started_at, scan.completed_at];
