@@ -185,6 +185,7 @@ server-side through the admin gate; they never hold the cron secret.
 | Admin "scan now" (manual) | **Admin** → System | `requireAdmin`, then server-side cron trigger | `/api/admin/scan` |
 | My watchlist (add/remove) | **Tenant** | token + RLS owner-only | `/api/watchlist` |
 | My portfolio / positions | **Tenant** | token + RLS owner-only | `/api/portfolio` |
+| My portfolio P&L / concentration | **Tenant** | token + RLS owner-only (reuses shared prices) | `/api/portfolio/summary` |
 | My personal settings | **Tenant** | token + RLS owner-only | `/api/settings` |
 | My alert prefs | **Tenant** | token + RLS owner-only | `/api/alerts` |
 | Ask / chat | **Tenant** | token + per-user daily quota | `/api/chat` |

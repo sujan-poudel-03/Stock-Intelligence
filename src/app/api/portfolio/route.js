@@ -8,8 +8,13 @@ export const dynamic = 'force-dynamic';
 
 // Per-user portfolio / positions (Phase 2 step 5a). Owner-only, app-layer enforced:
 // verify token -> user_id -> every query scoped by user_id. Positions are purely
-// personal bookkeeping (they do NOT feed the global scan); all money math
-// (break-even / P&L / charges) is recomputed in the UI from these raw rows.
+// personal bookkeeping (they do NOT feed the global scan).
+//
+// This route stays the FAST raw-rows list (all statuses, this user only). The money
+// math (cost basis, realized/unrealized net-of-charges P&L, CGT, sector concentration)
+// is now computed SERVER-SIDE — see src/lib/portfolioMath.js (pure) + portfolioSummary.js
+// (assembly), surfaced at GET /api/portfolio/summary and reused by the chat advisor.
+// Prices there are the shared ground-truth signal prices, never LLM-sourced.
 //
 // NOTE: the portfolios schema has no free-text column, so the buy "basis" / sell
 // "reason" the UI collects is not persisted server-side (see PHASE2 report).

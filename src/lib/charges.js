@@ -50,6 +50,68 @@ export function legCharges({ value, side } = {}) {
   return { side: side || null, broker, sebon, dp, total: broker + sebon + dp };
 }
 
+// positionPnl({ qty, buyPrice, currentOrSellPrice, holdDays, realized }): the net-of-
+// charges P&L of a REAL long position (actual qty, not a fixed notional — do NOT reuse
+// netReturn, which is notional-based for the track-record headline). Long-only (BUY):
+// buy @ buyPrice, mark/sell @ currentOrSellPrice — the portfolios schema has no short
+// column, so a "SELL to open" is not representable and not modeled here.
+//
+//   { costBasis, buyCharges, grossValue, sellCharges, cgtRate, cgt, netPnl,
+//     netPnlPreTax, returnPct }
+//
+// Both legs are charged via legCharges (buy leg already incurred; sell leg is the
+// hypothetical/actual exit). CGT applies to the POSITIVE net gain only, at the hold-days
+// rate (>=365 → 5%, else 7.5%). The tax treatment differs by `realized`:
+//   - realized=true  (closed round-trip): netPnl is net of charges AND CGT.
+//   - realized=false (open/mark-to-market): netPnl is net of CHARGES ONLY (pre-tax) —
+//     the headline the caller shows — while `cgt` carries the "if sold today" tax so the
+//     caller can derive an after-tax figure (netPnl - cgt) as a SEPARATE line.
+// netPnlPreTax is always the charges-only figure (== netPnl when unrealized). Never
+// throws — degenerate inputs (no qty/buyPrice) → well-formed zeros, mirroring netReturn.
+// When qty/buyPrice are valid but there is no usable current/sell price, cost basis +
+// buy charges are still returned (sell-side/P&L fields zeroed) so a price-less holding
+// contributes its cost basis rather than a phantom loss.
+export function positionPnl({ qty, buyPrice, currentOrSellPrice, holdDays, realized = false } = {}) {
+  const q = Number(qty);
+  const bp = Number(buyPrice);
+  const cp = Number(currentOrSellPrice);
+  const cgtRate = Number(holdDays) >= 365 ? 0.05 : 0.075;
+
+  // Fully degenerate (no position) → well-formed zeros.
+  if (!Number.isFinite(q) || !Number.isFinite(bp) || q <= 0 || bp <= 0) {
+    return {
+      costBasis: 0, buyCharges: 0, grossValue: 0, sellCharges: 0,
+      cgtRate, cgt: 0, netPnl: 0, netPnlPreTax: 0, returnPct: 0,
+    };
+  }
+
+  const costBasis = q * bp;
+  const buyCharges = legCharges({ value: costBasis, side: 'BUY' }).total;
+  const buyCostGross = costBasis + buyCharges;
+
+  // No usable current/sell price → cost basis + buy charges only (no P&L, no phantom loss).
+  if (!Number.isFinite(cp) || cp <= 0) {
+    return {
+      costBasis, buyCharges, grossValue: 0, sellCharges: 0,
+      cgtRate, cgt: 0, netPnl: 0, netPnlPreTax: 0, returnPct: 0,
+    };
+  }
+
+  const grossValue = q * cp;
+  const sellCharges = legCharges({ value: grossValue, side: 'SELL' }).total;
+  const sellProceedsNet = grossValue - sellCharges;
+
+  // Charges-only P&L (pre-tax). CGT taxes the positive net-of-charges gain, mirroring
+  // netReturn's taxableGain basis (gain measured after both legs' charges).
+  const netPnlPreTax = sellProceedsNet - buyCostGross;
+  const taxableGain = Math.max(0, netPnlPreTax);
+  const cgt = taxableGain * cgtRate;
+  const netPnl = realized ? netPnlPreTax - cgt : netPnlPreTax;
+  const returnPct = buyCostGross > 0 ? (netPnl / buyCostGross) * 100 : 0;
+
+  return { costBasis, buyCharges, grossValue, sellCharges, cgtRate, cgt, netPnl, netPnlPreTax, returnPct };
+}
+
 // netReturn({ entry, exit, direction, holdDays, notional }): the net-of-charges return of
 // a round-trip on a fixed notional principal. Returns both the gross and net view:
 //   { grossPct, netPct, grossProfit, netProfit, cgtRate, cgt, charges, notional }

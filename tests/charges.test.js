@@ -3,6 +3,7 @@ import {
   brokerCommission,
   legCharges,
   netReturn,
+  positionPnl,
   SEBON_LEVY_PCT,
   DP_FEE,
   NOTIONAL_PRINCIPAL,
@@ -111,5 +112,89 @@ describe('netReturn (net-of-charges round trip)', () => {
     expect(r.netPct).toBe(0);
     expect(r.cgt).toBe(0);
     expect(netReturn({}).netPct).toBe(0);
+  });
+});
+
+describe('positionPnl (real-qty position P&L, net of charges)', () => {
+  // Reference position: 100 shares @ Rs 100, marked/sold @ Rs 120.
+  //   costBasis = 10000; buyCharges = broker(36) + sebon(1.5) + dp(25) = 62.5
+  //   grossValue = 12000; sellCharges = broker(43.2) + sebon(1.8) + dp(25) = 70
+  //   netPnlPreTax = (12000-70) - (10000+62.5) = 1867.5
+  const base = { qty: 100, buyPrice: 100, currentOrSellPrice: 120 };
+
+  it('realized short-term round-trip charges CGT at 7.5% (< 365 days)', () => {
+    const r = positionPnl({ ...base, holdDays: 30, realized: true });
+    expect(r.costBasis).toBeCloseTo(10000, 6);
+    expect(r.buyCharges).toBeCloseTo(62.5, 6);
+    expect(r.grossValue).toBeCloseTo(12000, 6);
+    expect(r.sellCharges).toBeCloseTo(70, 6);
+    expect(r.cgtRate).toBe(0.075);
+    expect(r.netPnlPreTax).toBeCloseTo(1867.5, 6);
+    expect(r.cgt).toBeCloseTo(1867.5 * 0.075, 6);
+    expect(r.netPnl).toBeCloseTo(1867.5 - 1867.5 * 0.075, 6); // net of charges AND CGT
+  });
+
+  it('realized long-term round-trip charges CGT at 5% (>= 365 days)', () => {
+    const r = positionPnl({ ...base, holdDays: 400, realized: true });
+    expect(r.cgtRate).toBe(0.05);
+    expect(r.cgt).toBeCloseTo(1867.5 * 0.05, 6);
+    expect(r.netPnl).toBeCloseTo(1867.5 - 1867.5 * 0.05, 6);
+  });
+
+  it('applies the 365-day CGT boundary on BOTH sides (364 short, 365 long)', () => {
+    expect(positionPnl({ ...base, holdDays: 364, realized: true }).cgtRate).toBe(0.075);
+    expect(positionPnl({ ...base, holdDays: 365, realized: true }).cgtRate).toBe(0.05);
+  });
+
+  it('unrealized headline is pre-tax (charges only); after-CGT is a separate field', () => {
+    const r = positionPnl({ ...base, holdDays: 30, realized: false });
+    // Headline nets charges only — no CGT baked into netPnl.
+    expect(r.netPnl).toBeCloseTo(1867.5, 6);
+    expect(r.netPnl).toBeCloseTo(r.netPnlPreTax, 6);
+    // The "if sold today" tax rides along separately so the caller derives after-tax.
+    expect(r.cgt).toBeCloseTo(1867.5 * 0.075, 6);
+    const afterTax = r.netPnl - r.cgt;
+    expect(afterTax).toBeCloseTo(1867.5 - 1867.5 * 0.075, 6);
+    expect(afterTax).toBeLessThan(r.netPnl);
+  });
+
+  it('enforces the Rs 10 broker floor + DP Rs 25/leg on a tiny-value leg', () => {
+    // 1 share @ Rs 1000 → leg value 1000; broker = max(1000*0.36%, 10) = 10 (floored);
+    // sebon = 1000*0.015% = 0.15; dp = 25 → buyCharges = 35.15.
+    const r = positionPnl({ qty: 1, buyPrice: 1000, currentOrSellPrice: 1000, holdDays: 10, realized: true });
+    expect(r.buyCharges).toBeCloseTo(10 + 0.15 + DP_FEE, 6);
+    expect(r.sellCharges).toBeCloseTo(10 + 0.15 + DP_FEE, 6);
+    // Flat trade → the only P&L is the two legs' charges (incl. Rs 25 DP each way).
+    expect(r.netPnlPreTax).toBeCloseTo(-(r.buyCharges + r.sellCharges), 6);
+    expect(r.cgt).toBe(0); // no positive gain → no CGT
+  });
+
+  it('no positive gain → no CGT even when realized', () => {
+    const loss = positionPnl({ qty: 100, buyPrice: 100, currentOrSellPrice: 80, holdDays: 30, realized: true });
+    expect(loss.netPnlPreTax).toBeLessThan(0);
+    expect(loss.cgt).toBe(0);
+    expect(loss.netPnl).toBeCloseTo(loss.netPnlPreTax, 6);
+  });
+
+  it('no usable current/sell price → cost basis + buy charges only (no phantom loss)', () => {
+    const r = positionPnl({ qty: 100, buyPrice: 100, currentOrSellPrice: null, holdDays: 30 });
+    expect(r.costBasis).toBeCloseTo(10000, 6);
+    expect(r.buyCharges).toBeCloseTo(62.5, 6);
+    expect(r.grossValue).toBe(0);
+    expect(r.sellCharges).toBe(0);
+    expect(r.netPnl).toBe(0);
+    expect(r.netPnlPreTax).toBe(0);
+  });
+
+  it('degenerate inputs (no qty / no buy price / junk) → well-formed zeros', () => {
+    for (const bad of [{ qty: 0, buyPrice: 100, currentOrSellPrice: 120 }, { qty: 100, buyPrice: 0, currentOrSellPrice: 120 }, {}]) {
+      const r = positionPnl(bad);
+      expect(r.costBasis).toBe(0);
+      expect(r.buyCharges).toBe(0);
+      expect(r.netPnl).toBe(0);
+      expect(r.netPnlPreTax).toBe(0);
+      expect(r.returnPct).toBe(0);
+    }
+    expect(positionPnl().netPnl).toBe(0);
   });
 });

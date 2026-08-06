@@ -9,6 +9,7 @@ import { checkAndBumpChatQuota } from '@/lib/userQuota';
 import { getUserEntitlements } from '@/lib/entitlements';
 import { getUserSupabase } from '@/lib/supabase';
 import { SEBON_LEVY_PCT, DP_FEE } from '@/lib/charges';
+import { buildPortfolioSummary } from '@/lib/portfolioSummary';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -18,6 +19,9 @@ export const maxDuration = 60;
 // per-user daily quota. When off (single-operator local deploy), Ask stays open.
 const authOn = () =>
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+// Compact money/percent display for the prompt (integer Rupees / whole-percent).
+const round = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : 0);
 
 // POST /api/chat  { message, context } -> { reply }
 //
@@ -76,9 +80,43 @@ export const POST = withGuard(async (request) => {
   const watchlist = Array.isArray(ctx.watchlist) ? ctx.watchlist : [];
   const market = ctx.market || null;
 
-  const openPos = portfolio.filter((p) => p.status === 'OPEN');
-  const portStr =
-    openPos.map((p) => `${p.symbol} ${p.qty}u@Rs${p.price}`).join('; ') || 'none';
+  // Portfolio truth: when signed in, compute P&L + concentration SERVER-SIDE from the
+  // user's own positions + the shared ground-truth prices (buildPortfolioSummary) rather
+  // than trusting the client-sent ctx.portfolio (which carried throwaway client math and
+  // no verified prices). Best-effort — a failure falls back to the client-ctx path below,
+  // and the LLM never sets a price (it only reads the finished summary).
+  let serverSummary = null;
+  if (user) {
+    serverSummary = await buildPortfolioSummary(user).catch(() => null);
+    if (serverSummary && !serverSummary.ok) serverSummary = null;
+  }
+
+  // openPos: server-derived open rows when available, else the client-ctx fallback.
+  const openPos = serverSummary
+    ? serverSummary.positions.filter((p) => p.status === 'open')
+    : portfolio.filter((p) => p.status === 'OPEN');
+  const openCount = openPos.length;
+
+  let portStr;
+  let concStr = '';
+  if (serverSummary) {
+    const t = serverSummary.totals;
+    portStr =
+      openPos
+        .map((p) => {
+          const px = p.priceUnavailable ? 'n/a' : `Rs${round(p.currentPrice)}`;
+          const pnl = p.priceUnavailable ? '' : ` P&L Rs${round(p.netPnl)} (${round(p.returnPct)}%)`;
+          return `${p.symbol} ${p.qty}u@Rs${round(p.buyPrice)}→${px}${pnl}`;
+        })
+        .join('; ') || 'none';
+    // Concentration + realized/unrealized headline the advisor can cite verbatim.
+    const top = serverSummary.concentration?.bySector?.[0];
+    const conc = top ? `top sector ${top.key} ${round(top.pct)}%${top.overConcentrated ? ' (OVER-CONCENTRATED >40%)' : ''}` : 'n/a';
+    concStr = `Portfolio (server-computed, net of charges): cost basis Rs${round(t.costBasis)}, current value Rs${round(t.currentValue)}, unrealized Rs${round(t.unrealizedNet)} (after-CGT if sold today Rs${round(t.unrealizedNetAfterTax)}), realized Rs${round(t.realizedNet)}; ${conc}.`;
+  } else {
+    portStr =
+      openPos.map((p) => `${p.symbol} ${p.qty}u@Rs${p.price}`).join('; ') || 'none';
+  }
   const sigStr =
     signals
       .slice(0, 12)
@@ -108,8 +146,8 @@ export const POST = withGuard(async (request) => {
     : '';
 
   const system = `You are a sharp, direct NEPSE (Nepal Stock Exchange) trading advisor.
-Open positions (${openPos.length}): ${portStr}.
-Today's signals: ${sigStr}.
+Open positions (${openCount}): ${portStr}.
+${concStr ? concStr + '\n' : ''}Today's signals: ${sigStr}.
 Market: ${mktStr}.
 Watchlist: ${watchlist.join(', ') || 'empty'}.
 ${learnedBlock}NEPSE charges (each leg): broker commission is TIERED on the whole transaction value — <=50k 0.36%, 50k-500k 0.33%, 500k-2M 0.31%, 2M-10M 0.27%, >10M 0.24% (min Rs 10/txn); SEBON levy ${SEBON_LEVY_PCT}%; DP Rs ${DP_FEE}/scrip. CGT on gains only: 7.5% (<1yr) / 5% (>=1yr).
