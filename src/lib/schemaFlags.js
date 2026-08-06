@@ -184,3 +184,31 @@ export async function systemWatchlistReady() {
 export function __resetSystemWatchlistProbe() {
   systemWatchlistProbe = null;
 }
+
+// --- Paper trading (Beginner flagship §4.1) --------------------------------
+// Same discipline as systemWatchlistReady: until 20260810000000_paper_trading.sql is
+// applied, touching the `paper_accounts` / `paper_positions` tables would ERROR. Every
+// paper read/write (summary, order, reset) is gated on this probe so an unmigrated DB is
+// byte-for-byte as today (the Paper tab reports enabled:false; no paper table is touched).
+
+let paperTradingProbe = null;
+
+// paperTradingReady(): true when the per-user `paper_accounts` table exists.
+export async function paperTradingReady() {
+  if (paperTradingProbe) return paperTradingProbe;
+  paperTradingProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('paper_accounts').select('user_id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return paperTradingProbe;
+}
+
+// Test-only: reset the memoized paper-trading probe.
+export function __resetPaperTradingProbe() {
+  paperTradingProbe = null;
+}

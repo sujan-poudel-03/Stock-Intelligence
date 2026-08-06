@@ -82,6 +82,10 @@ const EXPECTED_TABLES = [
   // service-write; gated behind schema-flag probes until migrated.
   'alert_deliveries',
   'outcome_deliveries',
+  // Beginner flagship (§4.1) — SIMULATED paper-trading account. Per-user, owner-only
+  // RLS; WRITE-ISOLATED from the scan chain; gated behind paperTradingReady() until migrated.
+  'paper_accounts',
+  'paper_positions',
 ];
 
 // --- tiny output helpers ----------------------------------------------------

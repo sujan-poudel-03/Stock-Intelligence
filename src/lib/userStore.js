@@ -192,6 +192,37 @@ export async function closePosition(mode, id, sellPrice) {
   throw new Error('cannot save while signed out');
 }
 
+// ---- paper trading (SIMULATED account — §4.1) -------------------------------
+// A pure per-user sandbox reached ONLY via the authed API (owner-scoped, RLS). There is
+// deliberately NO local/gated mirror: the sim's virtual cash + net-of-charges/CGT math
+// runs SERVER-SIDE (prices are ground truth, never client-set), so it needs a signed-in
+// account. Signed out / unmigrated → { enabled:false }, and the UI shows a sign-in prompt.
+export async function loadPaper() {
+  try {
+    const res = await api('/api/paper');
+    if (!res.ok) return { ok: false, enabled: true };
+    return await res.json();
+  } catch {
+    return { ok: false, enabled: true };
+  }
+}
+
+// submitPaperOrder({ symbol, side, qty }) -> { ok, summary } | { error } (throws on reject
+// so the caller can toast the exact reason: insufficient cash / oversell / caps / no price).
+export async function submitPaperOrder({ symbol, side, qty }) {
+  const res = await api('/api/paper/order', { method: 'POST', body: { symbol, side, qty } });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'order rejected');
+  return d;
+}
+
+export async function resetPaper() {
+  const res = await api('/api/paper/reset', { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'reset failed');
+  return d;
+}
+
 // ---- personal settings (view prefs) -----------------------------------------
 export async function loadPersonalSettings(mode) {
   if (mode === 'api') {

@@ -13,6 +13,7 @@ import { getAccessToken } from '@/lib/authClient';
 import useBreakpoint from '@/hooks/useBreakpoint';
 import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 import { maskEmail, asOfLabel, channelNeedsSetup } from '@/lib/format';
+import { previewOrder, isWholeQty } from '@/lib/paperTrade';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -692,6 +693,19 @@ export default function NepseApp() {
   }, [exchange, addLog, showToast]);
 
   // -- stock overlay (server) -------------------------------------------------
+  // Indicative (NOT ground-truth) price for the paper-order PREVIEW only — the real fill
+  // uses the server's VERIFIED price. Best local estimate: stock-cache → live signal → signal.
+  function paperIndicativePrice(sym) {
+    var s = String(sym || '').toUpperCase();
+    var live = stockCache[s];
+    if (live && live.price) return Number(live.price);
+    var sigLive = signals.find(function (x) { return x.symbol === s && x.live; });
+    if (sigLive && sigLive.live && sigLive.live.price) return Number(sigLive.live.price);
+    var sig = signals.find(function (x) { return x.symbol === s; });
+    if (sig && sig.price) return Number(sig.price);
+    return null;
+  }
+
   function openStock(sym) {
     setOvSym(sym); setOvData(null); setOvAnalysis(''); setOvSig(null); setOvLoading(true);
     fetch('/api/stock?symbol=' + encodeURIComponent(sym), { cache: 'no-store' })
@@ -798,10 +812,19 @@ export default function NepseApp() {
   var TABS = [
     { k: 'today', label: 'Today' },
     { k: 'positions', label: 'Positions' + (noSLCount > 0 ? ' !' : '') },
+    { k: 'paper', label: 'Paper' },
     { k: 'signals', label: 'Signals' },
     { k: 'track', label: 'Track Record' },
     { k: 'watchlist', label: 'Watch ' + watchlist.length },
   ];
+
+  // Symbols offered in the paper order ticket: the curated system watchlist + the user's
+  // own watchlist (deduped). The panel adds any currently-held simulated symbols on top.
+  var paperSymbols = Array.from(new Set(
+    systemWatchlist.map(function (r) { return String(r.symbol || '').toUpperCase(); })
+      .concat(watchlist.map(function (s) { return String(s || '').toUpperCase(); }))
+      .filter(Boolean)
+  )).sort();
 
   var progressLabel = running ? (status.completed || 0) + '/' + (status.total || 0) + (scanSym ? ' ' + scanSym : '') : null;
 
@@ -1213,6 +1236,19 @@ export default function NepseApp() {
                 </div>
               )}
             </div>
+          )}
+
+          {/* PAPER TRADING — SIMULATED account (Beginner §4.1). Amber-themed + clearly
+              labeled so it can NEVER be mistaken for real trading/advice. */}
+          {tab === 'paper' && (
+            <PaperPanel
+              exchange={exchange}
+              signedIn={currentMode() === 'api'}
+              onSignIn={auth.signIn}
+              symbols={paperSymbols}
+              priceFor={paperIndicativePrice}
+              showToast={showToast}
+            />
           )}
 
           {/* SIGNALS */}
@@ -1808,6 +1844,239 @@ export default function NepseApp() {
 
 // Logged-out affordance for the per-user tabs (watchlist / positions). Friendly CTA,
 // never an error or a blank — viewing is free; sign-in is to SAVE your own data.
+// PAPER TRADING panel — a SIMULATED account (Beginner flagship §4.1). Amber-themed and
+// loudly labeled "SIMULATED / not real money / not advice" so it can never be confused for
+// real trading. All money math + the ground-truth fill run SERVER-SIDE (owner-scoped API);
+// this panel only previews an INDICATIVE cost/proceeds (final fill = the verified live
+// price) and requires a confirmation step before every order. The chat/LLM never sets a price.
+var AMBER = '#f59e0b';
+function PaperPanel(props) {
+  var signedIn = props.signedIn;
+  var showToast = props.showToast || function () {};
+  var [summary, setSummary] = useState(null);
+  var [loading, setLoading] = useState(false);
+  var [side, setSide] = useState('BUY');
+  var [symbol, setSymbol] = useState('');
+  var [qty, setQty] = useState('');
+  var [confirming, setConfirming] = useState(false);
+  var [busy, setBusy] = useState(false);
+  var [resetConfirm, setResetConfirm] = useState(false);
+
+  useEffect(function () {
+    if (!signedIn) { setSummary(null); return; }
+    var alive = true;
+    setLoading(true);
+    store.loadPaper().then(function (d) {
+      if (alive) { setSummary(d); setLoading(false); }
+    }).catch(function () { if (alive) setLoading(false); });
+    return function () { alive = false; };
+  }, [signedIn]);
+
+  if (!signedIn) {
+    return (
+      <div>
+        <PaperRibbon />
+        <Disclaimer exchange={props.exchange} />
+        <SignInPrompt title="Sign in to open your simulated account" sub="Paper trading is a risk-free practice account with virtual money — buys/sells fill at the real verified price and track net-of-charges P&L. It needs an account so your sandbox is private to you." onSignIn={props.onSignIn} />
+      </div>
+    );
+  }
+
+  if (loading && !summary) {
+    return <div><PaperRibbon /><Disclaimer exchange={props.exchange} /><div style={{ textAlign: 'center', padding: '40px 20px', color: '#4a5568', fontSize: 11 }}>Loading simulated account…</div></div>;
+  }
+
+  if (summary && summary.enabled === false) {
+    return (
+      <div>
+        <PaperRibbon />
+        <Disclaimer exchange={props.exchange} />
+        <div style={{ textAlign: 'center', padding: '40px 20px', color: '#4a5568', fontSize: 11 }}>Paper trading isn&apos;t enabled on this deployment yet.</div>
+      </div>
+    );
+  }
+
+  var account = (summary && summary.account) || {};
+  var equity = (summary && summary.equity) || {};
+  var positions = (summary && summary.positions) || [];
+  var openPositions = positions.filter(function (p) { return p.status === 'open'; });
+  var totals = (summary && summary.totals) || {};
+
+  // Order-ticket symbol universe: curated/watchlist + anything currently held.
+  var symbolOptions = Array.from(new Set(
+    (props.symbols || []).concat(openPositions.map(function (p) { return p.symbol; })).filter(Boolean)
+  )).sort();
+
+  var heldPos = openPositions.find(function (p) { return p.symbol === symbol; }) || null;
+  var indPrice = symbol ? props.priceFor(symbol) : null;
+  var qtyN = Number(qty);
+
+  // Client-side INDICATIVE preview (reuses the SAME pure engine as the server; the
+  // real fill re-computes on the verified price). ok=false → the reason blocks confirm.
+  var preview = (symbol && isWholeQty(qtyN) && Number.isFinite(indPrice) && indPrice > 0)
+    ? previewOrder({
+        side: side,
+        qty: qtyN,
+        price: indPrice,
+        cash: Number(account.cash),
+        position: heldPos ? { qty: heldPos.qty, buy_price: heldPos.buyPrice } : null,
+        holdDays: heldPos ? heldPos.holdDays : null,
+        openPositionCount: totals.openCount || openPositions.length,
+      })
+    : null;
+
+  function refresh(d) { if (d && d.summary) setSummary(d.summary); }
+
+  function submit() {
+    if (busy) return;
+    setBusy(true);
+    store.submitPaperOrder({ symbol: symbol, side: side, qty: qtyN })
+      .then(function (d) {
+        refresh(d);
+        showToast('SIMULATED ' + side + ' filled: ' + qtyN + ' ' + symbol, 'ok');
+        setConfirming(false); setQty('');
+      })
+      .catch(function (e) { showToast(e.message || 'Order rejected', 'err'); setConfirming(false); })
+      .then(function () { setBusy(false); });
+  }
+
+  function doReset() {
+    if (busy) return;
+    setBusy(true);
+    store.resetPaper()
+      .then(function (d) { refresh(d); showToast('Simulated account reset', 'info'); setResetConfirm(false); })
+      .catch(function (e) { showToast(e.message || 'Reset failed', 'err'); })
+      .then(function () { setBusy(false); });
+  }
+
+  var canReview = preview && preview.ok && !busy;
+
+  return (
+    <div className="fadeup">
+      <PaperRibbon />
+      <Disclaimer exchange={props.exchange} />
+
+      {/* ACCOUNT SUMMARY */}
+      <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
+        {[
+          ['cash', toRs(Number(account.cash) || 0), '#e2e8f0'],
+          ['equity', toRs(Number(equity.totalEquity) || 0), AMBER],
+          ['return', fmtRet(Number(equity.returnPct) || 0), (Number(equity.returnPct) || 0) >= 0 ? '#10b981' : '#ef4444'],
+          ['open', String(openPositions.length), '#e2e8f0'],
+        ].map(function (item) {
+          return <div key={item[0]} style={{ background: '#0d1018', border: '1px solid ' + AMBER + '22', borderRadius: 6, padding: '8px 10px' }}><div style={{ fontSize: 9, color: '#4a5568', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3 }}>{item[0]}</div><div style={{ fontSize: 16, fontWeight: 600, color: item[2] }}>{item[1]}</div></div>;
+        })}
+      </div>
+
+      {/* ORDER TICKET */}
+      <div style={card(AMBER)}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: AMBER, fontFamily: 'Inter,sans-serif', marginBottom: 10 }}>Simulated order ticket</div>
+        {/* side toggle */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {['BUY', 'SELL'].map(function (sd) {
+            var on = side === sd;
+            var c = sd === 'BUY' ? '#10b981' : '#ef4444';
+            return <button key={sd} onClick={function () { setSide(sd); setConfirming(false); }} style={{ flex: 1, padding: '7px', borderRadius: 6, border: '1px solid ' + (on ? c : '#1e2840'), background: on ? c + '18' : 'transparent', color: on ? c : '#4a5568', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{sd}</button>;
+          })}
+        </div>
+        <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>symbol</div>
+            <select value={symbol} onChange={function (e) { setSymbol(e.target.value); setConfirming(false); }} style={{ width: '100%', padding: '7px 8px', borderRadius: 6, background: '#07090e', border: '1px solid #1e2840', color: '#c8d4e8', fontSize: 12, fontFamily: 'IBM Plex Mono,monospace' }}>
+              <option value="">select…</option>
+              {symbolOptions.map(function (s) { return <option key={s} value={s}>{s}</option>; })}
+            </select>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>quantity (whole shares)</div>
+            <input value={qty} onChange={function (e) { setQty(e.target.value.replace(/[^0-9]/g, '')); setConfirming(false); }} inputMode="numeric" type="number" placeholder="shares" />
+          </div>
+        </div>
+
+        {/* indicative price + preview */}
+        {symbol && (
+          <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8 }}>
+            {Number.isFinite(indPrice) && indPrice > 0
+              ? <>indicative price ≈ <span style={{ color: '#c8d4e8' }}>{'Rs ' + indPrice}</span> <span style={{ color: '#2a3550' }}>(final fill at the verified live price)</span></>
+              : <span style={{ color: '#f59e0b' }}>no recent price — the order fills at the verified live price on submit</span>}
+          </div>
+        )}
+        {preview && preview.ok && (
+          <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8, padding: '7px 9px', background: '#0d1018', borderRadius: 5 }}>
+            {side === 'BUY'
+              ? <>you will pay ≈ <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{toRs2(Math.abs(preview.cashDelta))}</span> <span style={{ color: '#2a3550' }}>{'(incl. charges ' + toRs2(preview.charges) + ')'}</span></>
+              : <>you will receive ≈ <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{toRs2(preview.cashDelta)}</span> <span style={{ color: '#2a3550' }}>{'(net of charges ' + toRs2(preview.charges) + ' + CGT ' + toRs2(preview.cgt) + ')'}</span></>}
+          </div>
+        )}
+        {preview && !preview.ok && (
+          <div style={{ fontSize: 10, color: '#ef4444', marginBottom: 8 }}>{preview.reason}</div>
+        )}
+
+        {/* confirmation step */}
+        {confirming ? (
+          <div style={{ background: '#080a0f', borderRadius: 6, padding: 10, border: '1px solid ' + AMBER + '44' }}>
+            <div style={{ fontSize: 11, color: '#c8d4e8', marginBottom: 8, lineHeight: 1.5 }}>
+              Confirm <span style={{ fontWeight: 700, color: AMBER }}>SIMULATED</span> {side} of <span style={{ fontWeight: 600 }}>{qtyN + ' ' + symbol}</span> at the verified live price. This is practice with virtual money — no real order is placed.
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={submit} disabled={busy} style={{ flex: 1, padding: '7px', borderRadius: 6, border: '1px solid ' + AMBER, background: AMBER + '18', color: AMBER, fontSize: 11, cursor: busy ? 'default' : 'pointer', fontFamily: 'IBM Plex Mono,monospace', fontWeight: 600 }}>{busy ? 'placing…' : 'confirm simulated ' + side.toLowerCase()}</button>
+              <button onClick={function () { setConfirming(false); }} style={btn()}>cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={function () { setConfirming(true); }} disabled={!canReview} style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1px solid ' + (canReview ? AMBER : '#1e2840'), background: canReview ? AMBER + '15' : 'transparent', color: canReview ? AMBER : '#2a3550', fontSize: 11, fontWeight: 600, cursor: canReview ? 'pointer' : 'default', fontFamily: 'IBM Plex Mono,monospace' }}>review order</button>
+        )}
+      </div>
+
+      {/* OPEN POSITIONS */}
+      {openPositions.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ fontSize: 9, color: '#4a5568', letterSpacing: '.08em', marginBottom: 8 }}>SIMULATED POSITIONS</div>
+          {openPositions.map(function (p) {
+            var unreal = Number(p.netPnl) || 0;
+            return (
+              <div key={p.id} style={card(AMBER, { marginBottom: 8 })}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{p.symbol}</span>
+                  <span style={{ fontSize: 10, color: '#4a5568' }}>{p.qty + 'u @ Rs' + (Math.round((Number(p.buyPrice) || 0) * 100) / 100)}</span>
+                  {p.priceUnavailable
+                    ? <span style={{ fontSize: 9, color: '#f59e0b' }}>no live price</span>
+                    : <span style={{ fontSize: 10, color: '#c8d4e8' }}>{'live Rs' + p.currentPrice}</span>}
+                  {!p.priceUnavailable && <span style={{ fontSize: 10, fontWeight: 600, color: unreal >= 0 ? '#10b981' : '#ef4444' }}>{signed(unreal)} net</span>}
+                  <button onClick={function () { setSide('SELL'); setSymbol(p.symbol); setQty(String(p.qty)); setConfirming(false); }} style={Object.assign({ marginLeft: 'auto' }, btn('#ef4444', true))}>sell</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* RESET */}
+      <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
+        {resetConfirm ? (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: '#4a5568' }}>wipe all simulated positions &amp; restore virtual cash?</span>
+            <button onClick={doReset} disabled={busy} style={btn('#ef4444', true)}>{busy ? '…' : 'yes, reset'}</button>
+            <button onClick={function () { setResetConfirm(false); }} style={btn(null, true)}>cancel</button>
+          </div>
+        ) : (
+          <button onClick={function () { setResetConfirm(true); }} style={btn(null, true)}>reset simulated account</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Persistent amber "SIMULATED" ribbon shown at the top of the Paper tab.
+function PaperRibbon() {
+  return (
+    <div style={{ background: AMBER + '14', border: '1px solid ' + AMBER + '44', borderRadius: 8, padding: '8px 12px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: AMBER, fontFamily: 'IBM Plex Mono,monospace', letterSpacing: '.04em' }}>SIMULATED</span>
+      <span style={{ fontSize: 10, color: '#a1671a', fontFamily: 'Inter,sans-serif' }}>Virtual money — not real trading, not advice. Practice buys/sells fill at the real verified price so P&amp;L is realistic, but nothing here places a real order.</span>
+    </div>
+  );
+}
+
 function SignInPrompt(props) {
   return (
     <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '28px 20px', textAlign: 'center', marginTop: 8 }}>

@@ -38,7 +38,7 @@ transparency), without becoming a trading venue.
 |---|---|---|
 | Educational "not advice" framing | ✅ | Persistent banner + per-signal + alert disclaimers |
 | Plain-English **jargon translation** (tooltips/glossary) | 🔧 | Ask chat explains on request; **no tooltips/glossary** — planned (§4.3) |
-| **Paper trading** (simulated account) | 🔧 | **Missing** — the flagship beginner requirement (§4.1) |
+| **Paper trading** (simulated account) | ✅ | SHIPPED — virtual-cash sim, net-of-charges + CGT, NEPSE-only (§4.1) |
 | Safety guardrails / risk blocks | 🟡 | Liquidity filter + stop/target on every signal; no leverage/options exist to block (NEPSE cash market) |
 | Curated / starter watchlists | 🔧 | **Missing** — solved by the system/seed watchlist (§4.2) |
 | Guided onboarding / first-run help | 🔧 | Empty states are bare — planned (§4.3) |
@@ -93,18 +93,36 @@ From the progressive (Beginner→Intermediate→Pro) UAT passes:
 
 ## 4. Scoped requirements (the genuine new work)
 
-### 4.1 Paper trading — the beginner flagship 🔧
+### 4.1 Paper trading — the beginner flagship ✅ SHIPPED
 **Serves:** Beginner (the #1 ask) — and safely, since it involves no real money, no broker,
 and no execution/legal exposure.
-**What it is:** a simulated account with virtual cash. "Buy"/"Sell" a symbol fills at the
-**verified live price** (the ground-truth layer we already have); positions and P&L track
-over time using the **portfolio-P&L engine we just built** (`portfolioMath` + `charges`),
-so simulated P&L is net-of-charges and realistic. A confirmation step + a clear "SIMULATED"
-label on every action.
-**Reuses:** `getVerifiedPrice`, `portfolios`/`portfolioSummary`, `charges.positionPnl`.
+**What it is:** a simulated account with virtual cash (NPR 1,000,000 starting). "Buy"/"Sell"
+a symbol fills at the **verified live price** (the ground-truth layer — the fill FAILS CLOSED
+and rejects the order if the price can't be verified, never guessing); positions and P&L
+track using the **same net-of-charges engine** (`charges.positionPnl` + `portfolioMath`),
+so simulated P&L is net of NEPSE charges AND CGT and realistic. A confirmation step + a
+persistent amber "SIMULATED — not real money / not advice" label on every surface.
+**Shipped:** SEPARATE per-user `paper_accounts` + `paper_positions` tables (migration
+`20260810000000_paper_trading.sql`, owner-only RLS, WRITE-ISOLATED from the scan chain —
+nothing in scan/track-record/weights/knowledge reads them), gated behind a
+`paperTradingReady()` schema-flag probe so an unmigrated DB is byte-for-byte as today
+(`enabled:false`). Pure fill/cash math in `src/lib/paperTrade.js` (WACC average cost of fill
+prices only; whole-share integer qty; caps `MAX_ORDER_QTY` + `MAX_OPEN_POSITIONS`=20;
+Vitest-tested). Server assembly in `src/lib/paperSummary.js` (equity/return% layer over the
+shared portfolio math, bounded ≤5 on-demand verified-price fallback). Routes:
+`GET /api/paper` (summary), `POST /api/paper/order` (one `getVerifiedPrice`, fail-closed),
+`POST /api/paper/reset`. UI: an amber, visually-distinct **Paper** tab with an order ticket
+(curated/watchlist symbol picker, Buy/Sell, integer qty, an indicative pay/receive-incl-charges
+preview, and a confirmation step), the account view (cash/equity/return%/open positions), and
+a reset-behind-confirm.
+**Reuses:** `getVerifiedPrice`, `portfolioMath.buildSummary`, `charges.legCharges/positionPnl`.
 **In scope:** virtual buy/sell at live price, cash balance, positions, realized/unrealized
-P&L, reset. **Out of scope:** real orders, leverage, options.
-**Effort:** medium — a `paper` flag on positions + a virtual-cash ledger + an order ticket UI.
+P&L, reset. **Out of scope:** real orders, leverage, options, non-NEPSE exchanges (v1),
+user-set/backdated fill prices (anti-gaming — fills only at the current verified price).
+**Approximations (documented):** `buy_price` is the qty-weighted average of FILL PRICES ONLY
+(charges are not folded in — `positionPnl` recomputes the buy leg's charges on exit);
+`opened_at` is the FIRST buy and is never reset by later adds, so the CGT hold-days clock
+for the whole position runs from the earliest buy (a simplification vs. per-lot tax lots).
 
 ### 4.2 System / seed watchlist ✅ SHIPPED
 **Serves:** Beginner (curated starter watchlist) **and** the platform (seeds the scan so
