@@ -3,6 +3,7 @@ import { getServiceSupabase } from '@/lib/supabase';
 import { runBrief } from '@/lib/scan';
 import { checkOutcomes } from '@/lib/outcomes';
 import { refreshCorporateActions } from '@/lib/corporateActions';
+import { deliverSignalAlerts } from '@/lib/alertDelivery';
 import { runBackground } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { notify, formatScanDigest } from '@/lib/notify';
@@ -155,6 +156,15 @@ export const POST = withGuard(async (request) => {
       await checkOutcomes();
     } catch (err) {
       console.error('checkOutcomes failed:', err?.message || err);
+    }
+    // TIER-2: per-user watchlist-flip alerts. A FILTER over the shared signals just
+    // saved for this scan (no market-data re-fetch); best-effort in its own try/catch so
+    // a delivery failure can never break the scan. Gated on the alert_deliveries table —
+    // a no-op on an unmigrated DB. Uses the same service supabase + this scan's id.
+    try {
+      await deliverSignalAlerts(supabase, { scanId, exchange: scan?.exchange || 'NEPSE' });
+    } catch (err) {
+      console.error('deliverSignalAlerts failed:', err?.message || err);
     }
   });
 

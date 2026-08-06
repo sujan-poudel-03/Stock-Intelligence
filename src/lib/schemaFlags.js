@@ -110,3 +110,48 @@ export async function outcomeRealismColumnsReady() {
 export function __resetOutcomeRealismProbe() {
   outcomeRealismProbe = null;
 }
+
+// --- Per-user alert delivery (TIER-2) --------------------------------------
+// Same discipline as the probes above: until 20260808000000_alert_delivery.sql is
+// applied, touching the alert_deliveries / outcome_deliveries tables would ERROR.
+// Every delivery read/write is gated on these probes so an unmigrated DB behaves
+// byte-for-byte as today (no per-user delivery attempted; brief/outcome flow unchanged).
+
+let alertDeliveryProbe = null;
+let outcomeDeliveryProbe = null;
+
+// alertDeliveryReady(): true when the alert_deliveries cursor table exists.
+export async function alertDeliveryReady() {
+  if (alertDeliveryProbe) return alertDeliveryProbe;
+  alertDeliveryProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('alert_deliveries').select('user_id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return alertDeliveryProbe;
+}
+
+// outcomeDeliveryReady(): true when the outcome_deliveries ledger table exists.
+export async function outcomeDeliveryReady() {
+  if (outcomeDeliveryProbe) return outcomeDeliveryProbe;
+  outcomeDeliveryProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('outcome_deliveries').select('user_id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return outcomeDeliveryProbe;
+}
+
+// Test-only: reset the memoized delivery probes.
+export function __resetAlertDeliveryProbe() {
+  alertDeliveryProbe = null;
+  outcomeDeliveryProbe = null;
+}

@@ -4,6 +4,7 @@ import { updateWeights } from './calibration.js';
 import { recordOutcomeKnowledge } from './knowledge.js';
 import { logEvent } from './events.js';
 import { sendAlert } from './email.js';
+import { deliverOutcomeAlert } from './alertDelivery.js';
 import { normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
 import { getActiveAdjustment, applyAdjustment } from './corporateActions.js';
 import { corporateActionsReady, signalCaColumnsReady, outcomeRealismColumnsReady } from './schemaFlags.js';
@@ -197,13 +198,21 @@ export async function checkOutcomes() {
     await updateWeights(sig.symbol, sig.sector, sig.signal, outcome, returnPct, exchange);
     await recordOutcomeKnowledge(sig, outcome, price, returnPct);
 
-    // Alert.
+    // Alert (global operator channel).
     await sendAlert(
       outcome === 'WIN' ? 'TARGET_HIT' : 'SL_BREACH',
       sig.symbol,
       price,
       outcome === 'WIN' ? target : sl
     );
+
+    // TIER-2: per-user outcome email to watchers of this symbol. Best-effort in its own
+    // try/catch so it can never break resolution; a no-op on an unmigrated DB.
+    try {
+      await deliverOutcomeAlert(supabase, { sig, outcome, exitPrice: price, level: outcome === 'WIN' ? target : sl });
+    } catch (err) {
+      console.error('deliverOutcomeAlert failed:', err?.message || err);
+    }
 
     // Durable history of the resolved outcome (feeds the Activity tab).
     await logEvent(supabase, {
@@ -365,6 +374,12 @@ async function resolveRealism(supabase, sig, priceData, exchange, nowIso, resolv
       exitPrice,
       outcome === 'WIN' ? target : sl
     );
+    // TIER-2: per-user outcome email to watchers. Best-effort; no-op on an unmigrated DB.
+    try {
+      await deliverOutcomeAlert(supabase, { sig, outcome, exitPrice, level: outcome === 'WIN' ? target : sl });
+    } catch (err) {
+      console.error('deliverOutcomeAlert failed:', err?.message || err);
+    }
   }
 
   await logEvent(supabase, {

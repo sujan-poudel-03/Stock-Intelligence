@@ -81,6 +81,17 @@ create table alert_prefs (
 > **Deferred to a later phase:** `subscriptions (user_id, tier, status, provider,
 > current_period_end)` — added only when billing is introduced.
 
+> **Per-user alert DELIVERY (TIER-2) is LIVE via email.** `alert_prefs`
+> (channels/thresholds) now drives real notifications: a watched symbol flipping to
+> BUY/SELL emails the watcher, and a resolved TARGET_HIT/SL_BREACH emails watchers of
+> that symbol — a FILTER over the shared signals, never a re-scan. Backed by two new
+> owner-read / service-write ledgers, `alert_deliveries` (per-(user,exchange,symbol)
+> direction cursor; first observation seeds SILENTLY so standing signals don't burst)
+> and `outcome_deliveries` (one-shot per-(user,signal)). See `src/lib/alertDelivery.js`;
+> config-gated on `RESEND_API_KEY`, schema-flag-gated on the two tables. **Per-user
+> Telegram is still deferred** — it needs a stored `telegram_chat_id` and a bot `/start`
+> linking flow (email needs no such handshake).
+
 ---
 
 ## RLS policies

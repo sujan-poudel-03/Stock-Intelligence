@@ -229,8 +229,12 @@ routes (`/api/watchlist|portfolio|settings|alerts`), gated UI (sign-in-to-save +
 admin-only config), per-user chat quota, read-only hardened `/api/storage`,
 admin-only in-app scan (`/api/admin/scan`). Billing was **deliberately dropped**
 (free, OAuth-gated). Full model + 4-tier access scope: `docs/PHASE2-MULTITENANT.md`.
-*Deferred follow-ups:* per-user alert **delivery** (prefs stored, not yet sent — needs
-per-user destinations), seed/system watchlist for intraday light scans, billing.
+*Deferred follow-ups:* per-user alert **delivery** is LIVE via **email** (TIER-2:
+watched-symbol BUY/SELL flips + per-user TARGET_HIT/SL_BREACH to watchers, a filter over
+the shared signals — `src/lib/alertDelivery.js`, config-gated on `RESEND_API_KEY`, gated
+behind schema-flag probes for `alert_deliveries`/`outcome_deliveries`); **per-user
+Telegram is still deferred** (needs a `telegram_chat_id` + a bot `/start` linking flow).
+Also deferred: seed/system watchlist for intraday light scans, billing.
 (Preserve the shared/per-user split — see the "Market data is GLOBAL" guardrail.
 Market data/scans/signals/weights/knowledge stay global; only a thin per-user layer
 is added.)

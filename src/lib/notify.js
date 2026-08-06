@@ -80,6 +80,21 @@ async function sendTelegram({ title, text }, env) {
   return res.ok;
 }
 
+// deliverEmail({ to, subject, text }): send to a SPECIFIC recipient (per-user alert
+// delivery — TIER-2). Config-gated exactly like the channels above: returns false and
+// sends nothing without RESEND_API_KEY (or without a `to`). DISTINCT from notify()/
+// sendEmail(), which fan out the global OPERATOR digest to ALERT_TO — this targets an
+// individual user's address and must never be used for the operator digest. Best-effort:
+// the caller wraps it; a Resend failure throws to the caller's try/catch.
+export async function deliverEmail({ to, subject, text }, env = process.env) {
+  if (!env.RESEND_API_KEY || !to) return false;
+  const { Resend } = await import('resend');
+  const resend = new Resend(env.RESEND_API_KEY);
+  const from = env.ALERT_FROM || 'NEPSE Intelligence <alerts@resend.dev>';
+  await resend.emails.send({ from, to, subject: subject || 'NEPSE Intelligence', text });
+  return true;
+}
+
 async function sendEmail({ title, text }, env) {
   if (!env.RESEND_API_KEY) return false;
   const { Resend } = await import('resend');

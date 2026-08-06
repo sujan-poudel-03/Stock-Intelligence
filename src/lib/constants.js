@@ -20,6 +20,10 @@ export const EXPECTED_TABLES = [
   'portfolios',
   'alert_prefs',
   'subscriptions', // tier/entitlement extension point (free by default)
+  // TIER-2 per-user alert DELIVERY ledgers (email notifications). Owner-read,
+  // service-write; gated behind schema-flag probes until migrated.
+  'alert_deliveries',
+  'outcome_deliveries',
 ];
 
 export const KV = {
