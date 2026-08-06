@@ -34,3 +34,49 @@ export async function exchangeColumnReady() {
 export function __resetExchangeProbe() {
   probe = null;
 }
+
+// --- Corporate-action awareness (TIER-1 #1) --------------------------------
+// Same discipline as exchangeColumnReady: until 20260806130000_corporate_actions.sql
+// is applied, touching the `corporate_actions` table or the new signal CA columns
+// would ERROR and break outcome resolution. Every CA read/write is gated on these two
+// probes so an unmigrated DB behaves byte-for-byte as today (no adjustment, no VOID).
+
+let caTableProbe = null;
+let caColumnsProbe = null;
+
+// corporateActionsReady(): true when the global `corporate_actions` table exists.
+export async function corporateActionsReady() {
+  if (caTableProbe) return caTableProbe;
+  caTableProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('corporate_actions').select('id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return caTableProbe;
+}
+
+// signalCaColumnsReady(): true when signals carry the CA adjustment columns
+// (orig_*/ca_factor/ca_deduction/ca_note). Probed via ca_factor.
+export async function signalCaColumnsReady() {
+  if (caColumnsProbe) return caColumnsProbe;
+  caColumnsProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('signals').select('ca_factor').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return caColumnsProbe;
+}
+
+// Test-only: reset the memoized CA probes.
+export function __resetCorporateActionsProbe() {
+  caTableProbe = null;
+  caColumnsProbe = null;
+}

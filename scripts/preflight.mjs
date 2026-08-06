@@ -70,6 +70,7 @@ const EXPECTED_TABLES = [
   'alerts',
   'events',
   'knowledge',
+  'corporate_actions', // TIER-1 #1 global corporate-action awareness (bonus/rights/div ex-dates)
   // Phase 2 per-user tables (thin per-user layer; RLS added in a later step).
   'watchlists',
   'user_settings',

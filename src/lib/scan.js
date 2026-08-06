@@ -3,6 +3,9 @@ import { getWeightContext, getOverviewContext } from './calibration.js';
 import { getKnowledgeContext } from './knowledge.js';
 import { getVerifiedPrice } from './marketProviders.js';
 import { getExchange, currencySymbolFor, DEFAULT_EXCHANGE } from './exchanges.js';
+import { getSupabase } from './supabase.js';
+import { getActiveAdjustment } from './corporateActions.js';
+import { corporateActionsReady } from './schemaFlags.js';
 
 // ---------------------------------------------------------------------------
 // scanMarket(exchange): fetch the exchange's index, gainers, losers, turnover via
@@ -142,13 +145,30 @@ export async function scanOneStock(symbol, marketData = {}, weights = null, know
   const ex = getExchange(exchange);
   const cur = ex.currencySymbol;
 
+  // TIER-1 #1: if a corporate-action ex-window covers TODAY for this symbol, the price
+  // has (or is about to) drop mechanically — thread its factor into the verified-price
+  // guard so the legit post-ex quote is accepted instead of rejected as implausible.
+  // Best-effort + gated on the CA table probe: on an unmigrated DB, or any read
+  // failure, caFactor stays undefined and the fetch below is byte-for-byte today. The
+  // ground-truth rule holds — the LLM never sets the price; the CA factor is scraped.
+  let caFactor;
+  try {
+    if (await corporateActionsReady()) {
+      const nowIso = new Date().toISOString();
+      const adj = await getActiveAdjustment(getSupabase(), symbol, exchange, nowIso, nowIso);
+      if (adj.actions.length && adj.computable) caFactor = adj.factor;
+    }
+  } catch {
+    /* best-effort: a CA read failure must never break the scan (caFactor stays undefined) */
+  }
+
   // Ground truth FIRST (CLAUDE.md guardrail #1): the price comes from the verified
   // data layer, NEVER the LLM. If we can't verify a price, there is no usable
   // signal — throw 'no data from source' so the worker fails the job (retry surface)
   // instead of persisting a hollow or hallucinated card. Late-but-true is fine: the
   // verified layer accepts an hours-old quote and just flags it stale. The exchange
   // routes which sources + plausibility ceiling the verified layer uses.
-  const verified = await getVerifiedPrice(symbol, { exchange });
+  const verified = await getVerifiedPrice(symbol, { exchange, caFactor });
   if (!verified.verified) {
     throw new Error(`no data from source: ${symbol}`);
   }

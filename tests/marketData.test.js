@@ -33,6 +33,37 @@ describe('sanityCheck', () => {
     // +20% vs prevClose exceeds the 12% band
     expect(sanityCheck({ price: 120, prevClose: 100, asOf: NOW }, { now: NOW }).ok).toBe(false);
   });
+
+  // TIER-1 #1: corporate-action factor opt-in. A bonus/rights ex-move is mechanical,
+  // so the guard measures against the ADJUSTED previous close when caFactor is given.
+  describe('caFactor (corporate-action ex-move)', () => {
+    it('rejects a −50% move vs RAW prevClose without caFactor', () => {
+      // A 100% bonus halves the price: 200 -> 100 is a legit ex-move, but raw it looks
+      // like a −50% crash and must be rejected when no caFactor is supplied.
+      expect(sanityCheck({ price: 100, prevClose: 200, asOf: NOW }, { now: NOW }).ok).toBe(false);
+    });
+
+    it('ACCEPTS that same −50% move once caFactor=0.5 adjusts the base', () => {
+      // caFactor 0.5 (100% bonus) → adjusted base 200*0.5=100 → move ~0% → accepted.
+      expect(
+        sanityCheck({ price: 100, prevClose: 200, asOf: NOW }, { now: NOW, caFactor: 0.5 }).ok
+      ).toBe(true);
+    });
+
+    it('still REJECTS a move implausible relative to the ADJUSTED base', () => {
+      // caFactor 0.5 → adjusted base 100; a price of 130 is +30% vs that base → rejected.
+      expect(
+        sanityCheck({ price: 130, prevClose: 200, asOf: NOW }, { now: NOW, caFactor: 0.5 }).ok
+      ).toBe(false);
+    });
+
+    it('is UNCHANGED when caFactor is absent (byte-for-byte today)', () => {
+      // Same normal quote with and without the opt behaves identically.
+      const q = { price: 105, prevClose: 100, asOf: NOW };
+      expect(sanityCheck(q, { now: NOW }).ok).toBe(true);
+      expect(sanityCheck(q, { now: NOW, caFactor: undefined }).ok).toBe(true);
+    });
+  });
 });
 
 describe('reconcile', () => {

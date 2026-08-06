@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { runBrief } from '@/lib/scan';
 import { checkOutcomes } from '@/lib/outcomes';
+import { refreshCorporateActions } from '@/lib/corporateActions';
 import { runBackground } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { notify, formatScanDigest } from '@/lib/notify';
@@ -138,6 +139,17 @@ export const POST = withGuard(async (request) => {
       }
     } catch (err) {
       console.error('notify failed:', err?.message || err);
+    }
+    // TIER-1 #1: refresh the global corporate-actions table (bonus/rights/dividend
+    // ex-dates) BEFORE resolving outcomes, so checkOutcomes sees the latest ex-windows
+    // and can adjust/suppress instead of recording a mechanical ex-drop as a false
+    // LOSS. Best-effort in its own try/catch — a crawl failure must never block outcome
+    // resolution. (Can graduate to its own chained worker if the crawl grows past the
+    // 60s budget; today it's a small bounded fetch of merolagani announcement pages.)
+    try {
+      await refreshCorporateActions(supabase);
+    } catch (err) {
+      console.error('refreshCorporateActions failed:', err?.message || err);
     }
     try {
       await checkOutcomes();

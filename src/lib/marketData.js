@@ -21,6 +21,13 @@ const DEFAULTS = {
   staleAfterMs: 6 * 60 * 60 * 1000, // DISPLAY flag only — marks a quote "stale", never rejects
   rejectStale: false, // correctness > freshness: late-but-true is acceptable by default
   maxStalenessMs: 7 * 24 * 60 * 60 * 1000, // only consulted when rejectStale=true (absurdly-old guard)
+  // caFactor (TIER-1 #1): a corporate-action price-adjustment factor (e.g. 0.833 for a
+  // 20% bonus). DEFAULT undefined = the guard is UNCHANGED (byte-for-byte today). When
+  // a finite positive number is supplied, the move check is measured against the
+  // CA-ADJUSTED previous close (prevClose*caFactor) so a legit MECHANICAL ex-move
+  // (bonus/rights/dividend) is accepted, while a move still implausible relative to the
+  // adjusted base is correctly rejected. Ground-truth ex-dates/ratios only — never LLM.
+  caFactor: undefined,
 };
 
 // A normalized quote: { symbol, price, prevClose|null, asOf(ms epoch)|null, source }.
@@ -47,7 +54,14 @@ export function sanityCheck(quote, opts = {}) {
   if (!q || num(q.price) == null) return fail('no-price');
   if (q.price <= 0) return fail('non-positive-price');
   if (q.prevClose != null && q.prevClose > 0) {
-    const movePct = Math.abs((q.price - q.prevClose) / q.prevClose) * 100;
+    // TIER-1 #1: when a corporate-action factor is supplied, the mechanical ex-move is
+    // expected, so compare against the ADJUSTED previous close (prevClose*caFactor) —
+    // e.g. a 20% bonus (caFactor≈0.833) turns a raw −16.7% "crash" into ~0%. Absent a
+    // finite positive caFactor, the base is the raw prevClose (unchanged behaviour).
+    const caFactor = Number(o.caFactor);
+    const base =
+      Number.isFinite(caFactor) && caFactor > 0 ? q.prevClose * caFactor : q.prevClose;
+    const movePct = Math.abs((q.price - base) / base) * 100;
     if (movePct > o.maxDailyMovePct) return fail(`implausible-move:${movePct.toFixed(1)}%`);
   }
   return { ok: true };
