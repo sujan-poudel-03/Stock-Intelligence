@@ -37,7 +37,7 @@ describe('source config + availability', () => {
     const byId = Object.fromEntries(list.map((p) => [p.id, p]));
     expect(byId.merolagani.available).toBe(true); // live, no env needed
     expect(byId.sample.available).toBe(true);
-    expect(byId.sharesansar.available).toBe(false); // stub — not implemented
+    expect(byId.sharesansar.available).toBe(true); // live 2nd source, no env needed
     expect(byId.nepalstock.available).toBe(false); // requires env, not set
     expect(byId.nepalstock.requiresEnv).toContain('NEPALSTOCK_API_TOKEN');
     expect(byId.nepalstock.configured).toBe(false);
@@ -52,18 +52,24 @@ describe('source config + availability', () => {
     expect(listProviders().find((p) => p.id === 'nepalstock').available).toBe(true);
   });
 
-  it('rejects a stub (not-implemented) source', () => {
-    expect(validateSources(['sharesansar'])).toEqual([]);
+  it('accepts sharesansar — the second live NEPSE source (no env needed)', () => {
+    expect(validateSources(['sharesansar'])).toEqual(['sharesansar']);
   });
 
-  it('keeps a live source and drops unavailable ones from a mixed list', () => {
+  it('keeps live sources and drops unavailable ones from a mixed list', () => {
     delete process.env.NEPALSTOCK_API_TOKEN;
-    expect(validateSources(['merolagani', 'sharesansar', 'nepalstock', 'bogus'])).toEqual(['merolagani']);
+    // merolagani + sharesansar are both live; nepalstock (unmet env) + bogus are dropped.
+    expect(validateSources(['merolagani', 'sharesansar', 'nepalstock', 'bogus'])).toEqual([
+      'merolagani',
+      'sharesansar',
+    ]);
   });
 
   it('activeProviders resolves only available sources', () => {
-    process.env.MARKET_DATA_SOURCES = 'merolagani,sharesansar';
-    expect(activeProviders()).toHaveLength(1); // sharesansar dropped
+    delete process.env.NEPALSTOCK_API_TOKEN;
+    // Both live sources resolve; the unavailable nepalstock (no token) is dropped.
+    process.env.MARKET_DATA_SOURCES = 'merolagani,sharesansar,nepalstock';
+    expect(activeProviders()).toHaveLength(2); // nepalstock dropped
   });
 });
 

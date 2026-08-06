@@ -18,6 +18,7 @@ import { verifiedPrice, resolveProviders } from './marketData.js';
 import { fetchYahooStock, normalizeYahooQuote } from './yahoo.js';
 import { getExchange, normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
 import { parseMerolaganiFundamentals } from './merolaganiFundamentals.js';
+import { parseSharesansarToday } from './sharesansarToday.js';
 
 export const ACTIVE_SOURCES_KEY = 'ni:market_sources';
 // Code default is the offline `sample` source so the app runs with no network/config.
@@ -36,8 +37,9 @@ export const PROVIDERS = [
   {
     id: 'sharesansar',
     label: 'ShareSansar',
-    description: 'sharesansar.com — not yet implemented (price loads via a CSRF/AJAX flow).',
-    status: 'stub',
+    description:
+      'sharesansar.com — live server-rendered "Today\'s Share Price" board (LTP + prev close), fetched once per cycle and shared across symbols.',
+    status: 'live',
     requiresEnv: [],
     fetch: fetchSharesansar,
   },
@@ -269,10 +271,58 @@ async function fetchMerolagani(symbol) {
   }
 }
 
-// ShareSansar: price loads via a CSRF-token AJAX flow — not yet implemented, so this
-// fails closed. Build-ready slot for a second cross-check source.
-async function fetchSharesansar() {
-  return null; // TODO(P1-1): implement the sharesansar AJAX price flow.
+// ShareSansar: the per-company page loads its last price via a CSRF/AJAX flow that
+// can't be fetched deterministically. The "Today's Share Price" board, however, is
+// SERVER-RENDERED — one HTML table with every symbol's LTP + prev close. So this
+// source fetches that single board ONCE PER CYCLE (short-lived module cache, shared
+// across every symbol in the scan — "fetch once, share", never N table fetches) and
+// serves each symbol from the parsed map. Best-effort — any failure (network, layout
+// change, symbol absent) returns null so the verified layer fails closed to the
+// single merolagani source. NOTE (ToS): commercial scraping is part of the P3-1 legal
+// review; interim source before a licensed feed, same as merolagani.
+const SHARESANSAR_TODAY_URL = 'https://www.sharesansar.com/today-share-price';
+// Short TTL: long enough that one scan cycle reuses a single fetch, short enough that
+// the cached board can't drift far from merolagani's live per-symbol quote.
+const SHARESANSAR_TTL_MS = 60 * 1000;
+// Cache holds the in-flight/last-resolved PROMISE (not just data) so concurrent
+// per-symbol callers within a cycle dedupe onto ONE network round-trip.
+let sharesansarBoard = { at: 0, promise: null };
+
+async function loadSharesansarBoard() {
+  const res = await fetch(SHARESANSAR_TODAY_URL, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    cache: 'no-store',
+  });
+  if (!res.ok) return {};
+  return parseSharesansarToday(await res.text());
+}
+
+// Return the (cached) parsed board, refreshing past the TTL. Never rejects: a failed
+// load resolves to {} so every symbol simply misses → fails closed to single source.
+function getSharesansarBoard() {
+  const now = Date.now();
+  if (sharesansarBoard.promise && now - sharesansarBoard.at < SHARESANSAR_TTL_MS) {
+    return sharesansarBoard.promise;
+  }
+  const promise = loadSharesansarBoard().catch(() => ({}));
+  sharesansarBoard = { at: now, promise };
+  return promise;
+}
+
+async function fetchSharesansar(symbol) {
+  const s = String(symbol || '').toUpperCase();
+  if (!s) return null;
+  try {
+    const board = await getSharesansarBoard();
+    const row = board[s];
+    if (!row) return null;
+    const price = Number(row.price);
+    if (!Number.isFinite(price) || price <= 0) return null;
+    const prevClose = Number.isFinite(row.prevClose) && row.prevClose > 0 ? row.prevClose : null;
+    return { symbol: s, price, prevClose, asOf: Date.now(), source: 'sharesansar' };
+  } catch {
+    return null;
+  }
 }
 
 // NEPSE Official: build-ready, gated on NEPALSTOCK_API_TOKEN. Not selectable until
