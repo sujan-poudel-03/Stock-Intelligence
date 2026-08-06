@@ -18,6 +18,7 @@ export const EXPECTED_TABLES = [
   'user_settings',
   'portfolios',
   'alert_prefs',
+  'subscriptions', // tier/entitlement extension point (free by default)
 ];
 
 export const KV = {
