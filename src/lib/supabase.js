@@ -1,5 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 
+// Next.js (App Router) patches global `fetch` and CACHES GET responses by the request
+// URL. supabase-js issues its REST reads as GETs, so two reads of the same table+filter
+// within a request lifecycle can return the FIRST response — e.g. a tier read that saw
+// "no row" keeps returning free even after the row is written. `dynamic='force-dynamic'`
+// does not reliably opt library sub-fetches out in dev. Force `cache: 'no-store'` on
+// every Supabase request so reads always hit the database. Writes are POST/PATCH (never
+// cached) so this is a no-op for them. Applied to all three clients below.
+const noStoreFetch = (input, init = {}) => fetch(input, { ...init, cache: 'no-store' });
+
 // Supabase clients, split by trust level (Phase 2 multi-tenancy). See
 // docs/PHASE2-MULTITENANT.md.
 //
@@ -29,6 +38,7 @@ export function getSupabase() {
 
   _client = createClient(url, key, {
     auth: { persistSession: false },
+    global: { fetch: noStoreFetch },
   });
   return _client;
 }
@@ -56,6 +66,7 @@ export function getServiceSupabase() {
 
   _serviceClient = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: noStoreFetch },
   });
   return _serviceClient;
 }
@@ -79,6 +90,6 @@ export function getUserSupabase(token) {
 
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${token}` } },
+    global: { headers: { Authorization: `Bearer ${token}` }, fetch: noStoreFetch },
   });
 }

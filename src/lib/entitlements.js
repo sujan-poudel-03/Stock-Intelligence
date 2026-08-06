@@ -7,6 +7,14 @@
 // later be made admin-configurable.
 //
 // These limits are PLACEHOLDERS — the exact numbers are a product/pricing decision.
+//
+// ENFORCEMENT STATUS (as of the tier-control task): only two entitlements are
+// actually gated in request paths today —
+//   • watchlist_limit → POST /api/watchlist (see resolveWatchlistBlock below)
+//   • chat_daily      → POST /api/chat (passed to checkAndBumpChatQuota)
+// The rest (signals_limit, full_history, alerts, exchanges) are DECLARED-BUT-NOT-YET-
+// ENFORCED: they exist so the matrix is complete, but core signal viewing / track
+// record / brief stay UNGATED so the free beta remains fully usable. Wire them later.
 
 export const TIERS = {
   free: {
@@ -55,4 +63,16 @@ export async function getUserTier(supabase, userId) {
 // Convenience: resolve a user's live entitlements in one call.
 export async function getUserEntitlements(supabase, userId) {
   return entitlementFor(await getUserTier(supabase, userId));
+}
+
+// Pure watchlist-limit decision — extracted so the enforcement rule is unit-testable
+// without a DB. Returns { block, limit }.
+//   • limit == null (e.g. pro/unlimited) → never blocks.
+//   • adding an EXISTING symbol (isNew === false) → idempotent, never blocks even at
+//     the limit (an upsert of a row you already own must still succeed).
+//   • a NEW symbol when the current count is already at/over the limit → block.
+export function resolveWatchlistBlock({ limit, currentCount, isNew }) {
+  if (limit == null) return { block: false, limit };
+  if (!isNew) return { block: false, limit };
+  return { block: currentCount >= limit, limit };
 }

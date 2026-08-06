@@ -57,10 +57,12 @@ Full scans (2×/day, discovery-driven) already produce signals regardless.
 
 ---
 
-## 4. Tier / entitlement model — the billing EXTENSION POINT ✅ (built, dormant)
+## 4. Tier / entitlement model — the billing EXTENSION POINT ✅ (wired + enforced)
 
-Billing is **deliberately not built** (free, OAuth-gated). But the app is now wired so
-a paid model is a **drop-in later, not a re-architecture**:
+Billing is **deliberately not built** (free, OAuth-gated). The admin/tier
+feature-control is now **wired end-to-end and E2E-verified** — flipping a user's tier
+changes what they can do, live — so a paid model is a **drop-in later, not a
+re-architecture**:
 
 - **`subscriptions` table** (migration `20260806120000_subscriptions.sql`): one row
   per user — `tier` (default `'free'`), `status`, `provider`, `current_period_end`.
@@ -68,20 +70,34 @@ a paid model is a **drop-in later, not a re-architecture**:
   user can't self-upgrade; an **admin action or a billing webhook** sets the tier.
 - **`src/lib/entitlements.js`**: `TIERS` (the free/pro capability matrix — signals
   limit, watchlist limit, alerts, history, chat quota, exchanges), pure
-  `entitlementFor(tier)`, and `getUserTier` / `getUserEntitlements`.
+  `entitlementFor(tier)`, `getUserTier` / `getUserEntitlements`, and pure
+  `resolveWatchlistBlock` (unit-tested).
 
-**How it becomes admin-controlled feature gating later** (all wiring, no re-design):
-1. Read/feature routes call `getUserEntitlements(user)` and slice the shared output
-   (e.g. free = first N signals, no alerts/history; pro = full) — the scan stays one
-   global cost, tiers only gate *how much of it* a user sees + which per-user features.
-2. An **admin endpoint** (or a billing webhook: eSewa/Khalti/Stripe) writes
-   `subscriptions.tier` via the service role → the user's entitlements change instantly.
-3. `TIERS` can later be made admin-configurable if you want to tune limits without a
-   deploy.
+**What is LIVE today** (E2E-verified: user defaults free → admin flips to pro →
+entitlements change + limits lift, all against live routes):
+1. **`POST /api/admin/tier`** — admin-only (`requireAdmin` / `ADMIN_EMAILS`) sets a
+   user's `subscriptions.tier` via the service role. A non-admin gets 403. This is the
+   admin control surface; a billing webhook (eSewa/Khalti/Stripe) would write the same
+   row the same way.
+2. **`GET /api/me`** — returns `{ user, tier, entitlements }`; tier read owner-only via
+   the user's token. This is what the client polls to know what's unlocked.
+3. **Two entitlements are ENFORCED** in request paths:
+   - `watchlist_limit` → `POST /api/watchlist` (a new symbol past the plan limit → 403).
+   - `chat_daily` → `POST /api/chat` (the per-user daily Ask cap follows the plan).
 
-So: **admin/tier control of feature availability is the intended design**, and the
-foundation is in place today — everyone is `free` until a paid tier + gateway are
-switched on (post-legal, post-track-record).
+**Declared but NOT yet enforced** (wire when a paid tier launches):
+`signals_limit`, `full_history`, `alerts`, `exchanges` — core signal viewing / track
+record / brief stay UNGATED so the free beta remains fully usable. `TIERS` can also be
+made admin-configurable later to tune limits without a deploy.
+
+So: **admin/tier control of feature availability is built and working today** — everyone
+is `free` until a paid tier + gateway are switched on (post-legal, post-track-record).
+
+> **Infra note (fixed alongside this):** Next.js App Router caches `fetch` GET responses
+> by URL, which was making supabase-js reads return stale rows (a just-written tier read
+> back as `free`). `src/lib/supabase.js` now forces `cache: 'no-store'` on every Supabase
+> client, so server reads always hit the DB. This affected all in-route reads, not only
+> tier.
 
 ---
 

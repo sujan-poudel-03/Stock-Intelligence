@@ -6,6 +6,8 @@ import { getOverviewContext } from '@/lib/calibration';
 import { getKnowledgeContext } from '@/lib/knowledge';
 import { getUserFromRequest } from '@/lib/auth';
 import { checkAndBumpChatQuota } from '@/lib/userQuota';
+import { getUserEntitlements } from '@/lib/entitlements';
+import { getUserSupabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -54,7 +56,11 @@ export const POST = withGuard(async (request) => {
   // Per-user daily quota: stops a single user from draining the shared budget for
   // everyone. Only enforced for signed-in users (open single-operator deploys skip).
   if (user) {
-    const q = await checkAndBumpChatQuota(user.id);
+    // Tier-aware daily cap: resolve the user's entitlement (owner-read via their
+    // token) and use their plan's chat_daily as the limit. Best-effort — getUserTier
+    // defaults to 'free' on any error, so the quota still applies.
+    const entitlements = await getUserEntitlements(getUserSupabase(user.token), user.id);
+    const q = await checkAndBumpChatQuota(user.id, entitlements.chat_daily);
     if (!q.allowed) {
       return NextResponse.json({
         reply: `You've reached today's Ask limit (${q.limit} questions). It resets at 00:00 UTC — the daily brief, signals, and track record are still here in the meantime.`,

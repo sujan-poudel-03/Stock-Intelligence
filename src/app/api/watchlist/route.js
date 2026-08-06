@@ -3,6 +3,7 @@ import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
 import { normalizeExchange } from '@/lib/exchanges';
 import { withGuard } from '@/lib/respond';
+import { getUserEntitlements, resolveWatchlistBlock } from '@/lib/entitlements';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +46,33 @@ export const POST = withGuard(async (request) => {
   if (!symbol) return NextResponse.json({ error: 'missing symbol' }, { status: 400 });
 
   const supabase = getUserSupabase(user.token);
+
+  // Tier gate: enforce watchlist_limit (per exchange). Adding an EXISTING symbol is
+  // idempotent and always allowed; a NEW symbol is blocked once the plan's limit is
+  // reached. Unlimited tiers (limit null) never block.
+  const entitlements = await getUserEntitlements(supabase, user.id);
+  if (entitlements.watchlist_limit != null) {
+    const { data: existing, error: countErr } = await supabase
+      .from('watchlists')
+      .select('symbol')
+      .eq('user_id', user.id)
+      .eq('exchange', exchange);
+    if (countErr) throw countErr;
+    const rows = existing || [];
+    const isNew = !rows.some((r) => r.symbol === symbol);
+    const { block, limit } = resolveWatchlistBlock({
+      limit: entitlements.watchlist_limit,
+      currentCount: rows.length,
+      isNew,
+    });
+    if (block) {
+      return NextResponse.json(
+        { error: 'watchlist limit reached for your plan', limit },
+        { status: 403 }
+      );
+    }
+  }
+
   const row = { user_id: user.id, exchange, symbol, reason: body?.reason || 'manual' };
   const { error } = await supabase.from('watchlists').upsert(row, { onConflict: 'user_id,exchange,symbol' });
   if (error) throw error;
