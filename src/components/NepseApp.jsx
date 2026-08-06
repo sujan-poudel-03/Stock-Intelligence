@@ -8,6 +8,7 @@ import AdminChannels from '@/components/AdminChannels';
 import AuthPanel from '@/components/AuthPanel';
 import LoginWall from '@/components/LoginWall';
 import Disclaimer from '@/components/Disclaimer';
+import Term from '@/components/Term';
 import { useAuth } from '@/lib/useAuth';
 import { getAccessToken } from '@/lib/authClient';
 import useBreakpoint from '@/hooks/useBreakpoint';
@@ -164,10 +165,12 @@ function card(leftColor, extra) {
 function btn(color, sm) {
   return { padding: sm ? '4px 10px' : '6px 14px', borderRadius: 7, border: '1px solid ' + (color || '#1e2840'), background: 'transparent', color: color || '#4a5568', fontSize: sm ? 10 : 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', letterSpacing: '.02em' };
 }
-function sbox(label, value, color) {
+// sbox(label, value, color, termKey?) — a small stat box. When `termKey` is given
+// the LABEL becomes a plain-English tooltip (glossary), leaving the value untouched.
+function sbox(label, value, color, termKey) {
   return (
     <div style={{ background: '#07090e', borderRadius: 7, padding: '6px 10px', border: '1px solid #141824' }}>
-      <div style={{ fontSize: 8, color: '#2a3550', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 8, color: '#2a3550', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 3 }}>{termKey ? <Term k={termKey}>{label}</Term> : label}</div>
       <div style={{ fontSize: 12, fontWeight: 500, color: color || '#c8d4e8', fontFamily: 'IBM Plex Mono,monospace' }}>{value || '-'}</div>
     </div>
   );
@@ -884,7 +887,7 @@ export default function NepseApp() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'IBM Plex Mono,monospace' }}>{market.index}</span>
               <span style={{ fontSize: 10, color: market.change_pct >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{toPct(market.change_pct)}</span>
-              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: market.sentiment === 'BULLISH' ? '#10b98122' : market.sentiment === 'BEARISH' ? '#ef444422' : '#f59e0b22', color: market.sentiment === 'BULLISH' ? '#10b981' : market.sentiment === 'BEARISH' ? '#ef4444' : '#f59e0b' }}>{market.sentiment}</span>
+              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: market.sentiment === 'BULLISH' ? '#10b98122' : market.sentiment === 'BEARISH' ? '#ef444422' : '#f59e0b22', color: market.sentiment === 'BULLISH' ? '#10b981' : market.sentiment === 'BEARISH' ? '#ef4444' : '#f59e0b' }}><Term k={market.sentiment}>{market.sentiment}</Term></span>
             </div>
           ) : (
             <div style={{ padding: '3px 10px', background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 6 }}>
@@ -1122,14 +1125,14 @@ export default function NepseApp() {
                   <div key={s.id} style={card(sc)}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</span>
-                      <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 6px', borderRadius: 3 }}>{s.signal}</span>
-                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568' }}>{s.confidence}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 6px', borderRadius: 3 }}><Term k={s.signal}>{s.signal}</Term></span>
+                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568' }}><Term k="confidence">{s.confidence}</Term></span>
                       {s.live && <span style={{ fontSize: 8, color: '#10b981', background: '#10b98118', padding: '1px 5px', borderRadius: 2 }}>{'Rs' + s.live.price}</span>}
                       {s.source === 'discovered' && <span style={{ fontSize: 8, color: '#a78bfa', background: '#a78bfa18', padding: '1px 5px', borderRadius: 2 }}>discovered</span>}
                     </div>
                     <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
                     <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginBottom: 8 }}>
-                      {sbox('entry', s.entry)}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981')}
+                      {sbox('entry', s.entry, null, 'entry')}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444', 'stop')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981', 'target')}
                     </div>
                     {s.action && <div style={{ fontSize: 11, color: '#3b82f6', marginBottom: 8, fontFamily: 'IBM Plex Sans,sans-serif' }}>-&gt; {s.action}</div>}
                     {buyTarget === s.id ? (
@@ -1146,6 +1149,7 @@ export default function NepseApp() {
               })}
               {signals.length === 0 && !running && (
                 <div style={{ textAlign: 'center', padding: '40px 20px', color: '#4a5568' }}>
+                  <div style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>This is where the agent&apos;s daily BUY / HOLD / SELL reads appear — research it shows its work on, not advice.</div>
                   {auth.isAdmin ? (
                     <>
                       <div style={{ fontSize: 11, marginBottom: 10 }}>no signals yet — the agent scans on schedule, or run one now</div>
@@ -1171,7 +1175,7 @@ export default function NepseApp() {
               )}
               {gated
                 ? <SignInPrompt title="Sign in to track your positions" sub="Log your buys and sells to see invested amount, break-even and live P&L. Your positions are private to your account." onSignIn={auth.signIn} />
-                : (openPos.length === 0 && closedSells.length === 0 && <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11 }}>no open positions</div>)}
+                : (openPos.length === 0 && closedSells.length === 0 && <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11, lineHeight: 1.6 }}><div style={{ maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>No open positions yet. Log a buy from a signal to track your invested amount, break-even and live net-of-charges P&amp;L here — this is your own record, not a real order.</div></div>)}
               {openPos.map(function (p) {
                 var live = stockCache[p.symbol];
                 var sigLive = signals.find(function (s) { return s.symbol === p.symbol && s.live; });
@@ -1260,6 +1264,7 @@ export default function NepseApp() {
               </div>
               {signals.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11 }}>
+                  <div style={{ marginBottom: 12, lineHeight: 1.6, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>Signals are the agent&apos;s BUY / HOLD / SELL reads on the stocks it scanned — educational, not advice. You decide and place any trade yourself.</div>
                   {auth.isAdmin
                     ? <>no signals yet<br /><br /><button onClick={scanNow} style={btn('#3b82f6')}>scan now</button></>
                     : 'The agent scans on a schedule — new signals appear here.'}
@@ -1272,8 +1277,8 @@ export default function NepseApp() {
                   <div key={s.id} style={card(sc)}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</span>
-                      <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 6px', borderRadius: 3 }}>{s.signal}</span>
-                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568' }}>{s.confidence}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 6px', borderRadius: 3 }}><Term k={s.signal}>{s.signal}</Term></span>
+                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568' }}><Term k="confidence">{s.confidence}</Term></span>
                       {d && <span style={{ fontSize: 8, color: '#10b981', background: '#10b98118', padding: '1px 5px', borderRadius: 2 }}>{'Rs' + d.price}</span>}
                       {s.source === 'discovered' && <span style={{ fontSize: 8, color: '#a78bfa', background: '#a78bfa18', padding: '1px 5px', borderRadius: 2 }}>discovered</span>}
                       {isHeld && <span style={{ fontSize: 9, color: '#8b5cf6', background: '#8b5cf622', padding: '1px 5px', borderRadius: 3 }}>held</span>}
@@ -1293,7 +1298,7 @@ export default function NepseApp() {
                     )}
                     <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
                     <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5, marginBottom: 8 }}>
-                      {sbox('entry', s.entry)}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981')}{sbox('hold', s.hold)}
+                      {sbox('entry', s.entry, null, 'entry')}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444', 'stop')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981', 'target')}{sbox('hold', s.hold)}
                     </div>
                     {s.risk && <div style={{ fontSize: 10, color: '#f59e0b', marginBottom: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{'risk: ' + s.risk}</div>}
                     {s.action && <div style={{ fontSize: 11, color: '#3b82f6', marginBottom: 8, fontFamily: 'IBM Plex Sans,sans-serif' }}>-&gt; {s.action}</div>}
@@ -1335,11 +1340,11 @@ export default function NepseApp() {
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: 8, marginBottom: 12 }}>
                     {[
-                      { l: 'win rate', v: fmtRate(track.overall.winRate), c: '#3b82f6' },
-                      { l: 'conservative', v: fmtRate(track.overall.confidence), c: '#8b5cf6' },
+                      { l: 'win rate', v: fmtRate(track.overall.winRate), c: '#3b82f6', t: 'winRate' },
+                      { l: 'conservative', v: fmtRate(track.overall.confidence), c: '#8b5cf6', t: 'conservative' },
                       // Net-of-charges is the HEADLINE; gross is shown alongside (TIER-1 #3).
-                      { l: 'avg net', v: fmtRet(track.overall.avgNetReturn), c: track.overall.avgNetReturn >= 0 ? '#10b981' : '#ef4444' },
-                      { l: 'avg gross', v: fmtRet(track.overall.avgReturn), c: track.overall.avgReturn >= 0 ? '#10b981' : '#ef4444' },
+                      { l: 'avg net', v: fmtRet(track.overall.avgNetReturn), c: track.overall.avgNetReturn >= 0 ? '#10b981' : '#ef4444', t: 'net' },
+                      { l: 'avg gross', v: fmtRet(track.overall.avgReturn), c: track.overall.avgReturn >= 0 ? '#10b981' : '#ef4444', t: 'gross' },
                       { l: 'record', v: track.overall.wins + 'W / ' + track.overall.losses + 'L', c: '#e2e8f0' },
                       { l: 'expired', v: String(track.expired ? track.expired.count : 0), c: '#c08a2c' },
                       { l: 'pending', v: String(track.pending), c: '#4a5568' },
@@ -1347,7 +1352,7 @@ export default function NepseApp() {
                       return (
                         <div key={x.l} style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px' }}>
                           <div style={{ fontSize: 16, fontWeight: 600, color: x.c, fontFamily: 'IBM Plex Mono,monospace' }}>{x.v}</div>
-                          <div style={{ fontSize: 9, color: '#4a5568', marginTop: 2, fontFamily: 'Inter,sans-serif' }}>{x.l}</div>
+                          <div style={{ fontSize: 9, color: '#4a5568', marginTop: 2, fontFamily: 'Inter,sans-serif' }}>{x.t ? <Term k={x.t}>{x.l}</Term> : x.l}</div>
                         </div>
                       );
                     })}
@@ -1786,7 +1791,7 @@ export default function NepseApp() {
           <div style={{ maxWidth: 680, margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
               <span style={{ fontSize: 18, fontWeight: 600, color: '#e2e8f0' }}>{ovSym}</span>
-              {ovSig && <span style={{ fontSize: 10, fontWeight: 700, color: SIG_COLORS[ovSig.signal] || '#4a5568', background: (SIG_COLORS[ovSig.signal] || '#4a5568') + '20', padding: '2px 8px', borderRadius: 3 }}>{ovSig.signal}</span>}
+              {ovSig && <span style={{ fontSize: 10, fontWeight: 700, color: SIG_COLORS[ovSig.signal] || '#4a5568', background: (SIG_COLORS[ovSig.signal] || '#4a5568') + '20', padding: '2px 8px', borderRadius: 3 }}><Term k={ovSig.signal}>{ovSig.signal}</Term></span>}
               {ovLoading && <span style={{ fontSize: 10, color: '#4a5568' }}>loading...</span>}
               <button onClick={function () { setOvSym(null); }} style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 5, border: '1px solid #1c2333', background: 'none', color: '#4a5568', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>close</button>
             </div>
@@ -1808,10 +1813,12 @@ export default function NepseApp() {
                     var v = function (x) { return x == null || x === '' ? null : x; };
                     var h52 = v(od.week52_high) != null ? v(od.week52_high) : v(od.high52);
                     var l52 = v(od.week52_low) != null ? v(od.week52_low) : v(od.low52);
-                    var rows = [['52w H', h52, 'Rs '], ['52w L', l52, 'Rs '], ['120d', v(od.avg120), 'Rs '], ['EPS', v(od.eps)], ['P/E', v(od.pe)], ['BV', v(od.bv), 'Rs '], ['PBV', v(od.pbv)], ['Div', v(od.div_pct), '', '%'], ['Yield', v(od.yield), '', '%'], ['Vol', v(od.volume)]];
+                    // item = [label, value, prefix, suffix, glossaryTermKey?] — the LABEL
+                    // gets a plain-English tooltip when a glossary key is present.
+                    var rows = [['52w H', h52, 'Rs ', '', 'week52'], ['52w L', l52, 'Rs ', '', 'week52'], ['120d', v(od.avg120), 'Rs '], ['EPS', v(od.eps), '', '', 'EPS'], ['P/E', v(od.pe), '', '', 'PE'], ['BV', v(od.bv), 'Rs ', '', 'BV'], ['PBV', v(od.pbv), '', '', 'PBV'], ['Div', v(od.div_pct), '', '%', 'dividend'], ['Yield', v(od.yield), '', '%', 'yield'], ['Vol', v(od.volume)]];
                     return rows.map(function (item) {
                       var val = item[1] == null ? '-' : (item[2] || '') + item[1] + (item[3] || '');
-                      return <div key={item[0]} style={{ background: '#080a0f', borderRadius: 4, padding: '4px 7px' }}><div style={{ fontSize: 8, color: '#1c2333', marginBottom: 2 }}>{item[0]}</div><div style={{ fontSize: 11, fontWeight: 500, color: '#c8d4e8' }}>{val}</div></div>;
+                      return <div key={item[0]} style={{ background: '#080a0f', borderRadius: 4, padding: '4px 7px' }}><div style={{ fontSize: 8, color: '#1c2333', marginBottom: 2 }}>{item[4] ? <Term k={item[4]}>{item[0]}</Term> : item[0]}</div><div style={{ fontSize: 11, fontWeight: 500, color: '#c8d4e8' }}>{val}</div></div>;
                     });
                   })()}
                 </div>
@@ -1828,7 +1835,7 @@ export default function NepseApp() {
             {ovSig && (
               <div style={card(SIG_COLORS[ovSig.signal] || '#4a5568')}>
                 <div className="metrics-tight" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginBottom: 8 }}>
-                  {sbox('signal', ovSig.signal, SIG_COLORS[ovSig.signal])}{sbox('conf', ovSig.confidence, ovSig.confidence === 'HIGH' ? '#10b981' : ovSig.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568')}{sbox('entry', ovSig.entry || '-')}{sbox('stop loss', ovSig.sl ? 'Rs ' + ovSig.sl : '-', '#ef4444')}{sbox('target', ovSig.target ? 'Rs ' + ovSig.target : '-', '#10b981')}
+                  {sbox('signal', ovSig.signal, SIG_COLORS[ovSig.signal], ovSig.signal)}{sbox('conf', ovSig.confidence, ovSig.confidence === 'HIGH' ? '#10b981' : ovSig.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568', 'confidence')}{sbox('entry', ovSig.entry || '-', null, 'entry')}{sbox('stop loss', ovSig.sl ? 'Rs ' + ovSig.sl : '-', '#ef4444', 'stop')}{sbox('target', ovSig.target ? 'Rs ' + ovSig.target : '-', '#10b981', 'target')}
                 </div>
                 {ovSig.why && <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovSig.why}</div>}
                 {ovSig.signal === 'BUY' && <button onClick={function () { if (gated) { showToast('Sign in with Google to save positions', 'err'); setOvSym(null); setTab('settings'); return; } setOvSym(null); setBuyTarget(ovSig.id); setBuyQty(''); setBuySL(ovSig.sl ? String(ovSig.sl) : ''); setBuyReason(ovSig.why || ''); setTab('signals'); }} style={btn('#10b981')}>{'log buy for ' + ovSym}</button>}
@@ -2071,7 +2078,7 @@ function PaperPanel(props) {
 function PaperRibbon() {
   return (
     <div style={{ background: AMBER + '14', border: '1px solid ' + AMBER + '44', borderRadius: 8, padding: '8px 12px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 10, fontWeight: 700, color: AMBER, fontFamily: 'IBM Plex Mono,monospace', letterSpacing: '.04em' }}>SIMULATED</span>
+      <span style={{ fontSize: 10, fontWeight: 700, color: AMBER, fontFamily: 'IBM Plex Mono,monospace', letterSpacing: '.04em' }}><Term k="paper">SIMULATED</Term></span>
       <span style={{ fontSize: 10, color: '#a1671a', fontFamily: 'Inter,sans-serif' }}>Virtual money — not real trading, not advice. Practice buys/sells fill at the real verified price so P&amp;L is realistic, but nothing here places a real order.</span>
     </div>
   );
