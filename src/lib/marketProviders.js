@@ -309,6 +309,27 @@ function getSharesansarBoard() {
   return promise;
 }
 
+// getLiquidityBoard(): TIER-2 discovery liquidity source. Reuses the ALREADY-CACHED
+// ShareSansar board promise (getSharesansarBoard — same short-TTL, one round-trip per
+// cycle; NO new network call) and projects each row to { volume, turnover }. Best-effort:
+// any failure resolves to {} so discovery FAILS OPEN (drops nothing) rather than draining
+// the candidate pool. Keyed by UPPERCASE symbol, matching the board.
+export async function getLiquidityBoard() {
+  try {
+    const board = await getSharesansarBoard();
+    const out = {};
+    for (const [sym, row] of Object.entries(board || {})) {
+      if (!row) continue;
+      const volume = Number.isFinite(row.volume) && row.volume > 0 ? row.volume : null;
+      const turnover = Number.isFinite(row.turnover) && row.turnover > 0 ? row.turnover : null;
+      out[sym] = { volume, turnover };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 async function fetchSharesansar(symbol) {
   const s = String(symbol || '').toUpperCase();
   if (!s) return null;
@@ -328,7 +349,11 @@ async function fetchSharesansar(symbol) {
     const rangeOk = Number.isFinite(h) && Number.isFinite(l) && h > 0 && l > 0 && h >= l;
     const high = rangeOk ? h : null;
     const low = rangeOk ? l : null;
-    return { symbol: s, price, prevClose, high, low, asOf: Date.now(), source: 'sharesansar' };
+    // TIER-2: ground-truth LIQUIDITY (share volume + Rupee turnover) rides along as
+    // best-effort metadata off the same board row; null when the column was absent.
+    const volume = Number.isFinite(row.volume) && row.volume > 0 ? row.volume : null;
+    const turnover = Number.isFinite(row.turnover) && row.turnover > 0 ? row.turnover : null;
+    return { symbol: s, price, prevClose, high, low, volume, turnover, asOf: Date.now(), source: 'sharesansar' };
   } catch {
     return null;
   }

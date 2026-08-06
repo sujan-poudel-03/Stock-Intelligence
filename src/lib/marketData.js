@@ -117,7 +117,39 @@ export function reconcile(quotes, opts = {}) {
   // NEVER gates whether the price verified (the checks above are untouched) — an
   // implausible/inconsistent range is simply dropped to null.
   const range = pickRange(quotes, sources, price, o);
-  return { verified: true, price, asOf: asOf ?? null, ageMs, stale, sources, fundamentals, range };
+  // TIER-2: ground-truth LIQUIDITY (Rupee turnover / share volume) rides along as
+  // best-effort METADATA off the winning source(s), exactly like range/fundamentals —
+  // it NEVER gates whether the price verified.
+  const liquidity = pickLiquidity(quotes, sources);
+  return { verified: true, price, asOf: asOf ?? null, ageMs, stale, sources, fundamentals, range, liquidity };
+}
+
+// pickLiquidity(rawQuotes, sources): from the reconciled winning source list, the first
+// raw quote carrying a usable turnover or volume (finite > 0). Returns
+// { turnover, volume } (each null when absent) or null when no source has either. Pure,
+// never throws — liquidity is metadata and must never break a verified price.
+function pickLiquidity(quotes, sources) {
+  try {
+    for (const src of sources || []) {
+      const q = (quotes || []).find((x) => {
+        if (!x || x.source !== src) return false;
+        const t = num(x.turnover);
+        const v = num(x.volume);
+        return (t != null && t > 0) || (v != null && v > 0);
+      });
+      if (q) {
+        const t = num(q.turnover);
+        const v = num(q.volume);
+        return {
+          turnover: t != null && t > 0 ? t : null,
+          volume: v != null && v > 0 ? v : null,
+        };
+      }
+    }
+  } catch {
+    /* metadata only — never break a verified price */
+  }
+  return null;
 }
 
 // pickRange(rawQuotes, sources, price, o): from the reconciled winning source list, the

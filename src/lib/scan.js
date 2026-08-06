@@ -1,8 +1,9 @@
 import { callLLM, parseJson } from './llm.js';
 import { getWeightContext, getOverviewContext } from './calibration.js';
 import { getKnowledgeContext } from './knowledge.js';
-import { getVerifiedPrice } from './marketProviders.js';
+import { getVerifiedPrice, getLiquidityBoard } from './marketProviders.js';
 import { getExchange, currencySymbolFor, DEFAULT_EXCHANGE } from './exchanges.js';
+import { resolveMinTurnover, filterLiquidSymbols, illiquidityOf, MIN_TURNOVER_NPR } from './liquidity.js';
 import { getSupabase } from './supabase.js';
 import { getActiveAdjustment } from './corporateActions.js';
 import { corporateActionsReady } from './schemaFlags.js';
@@ -79,7 +80,21 @@ export async function runDiscovery(movers, settings = {}, exchange = DEFAULT_EXC
   const n = settings.discoverCount || settings.discovery_depth || 8;
   const gainers = (movers?.gainers || []).map((g) => g.symbol).filter(Boolean);
   const losers = (movers?.losers || []).map((l) => l.symbol).filter(Boolean);
-  const pool = [...new Set([...gainers, ...losers])];
+  let pool = [...new Set([...gainers, ...losers])];
+
+  // TIER-2 liquidity HARD FILTER (NEPSE only): drop candidates whose ground-truth Rupee
+  // turnover is KNOWN to be below the threshold, BEFORE the LLM prompt and every
+  // pool-based fallback below — so thin names that a retail order can't cleanly enter/exit
+  // never reach a signal. Reuses the already-cached ShareSansar board (no new round-trip).
+  // FAIL-OPEN: an empty board / unknown symbol drops nothing. NYSE seed path is unfiltered.
+  if (ex.id === DEFAULT_EXCHANGE && pool.length) {
+    try {
+      const board = await getLiquidityBoard();
+      pool = filterLiquidSymbols(pool, board, resolveMinTurnover(settings));
+    } catch {
+      /* liquidity board unavailable — fail open, keep the full pool */
+    }
+  }
 
   // No movers to work from → fall back to the exchange's seed universe (empty for
   // NEPSE, a fixed large-cap list for NYSE) rather than returning nothing.
@@ -182,11 +197,25 @@ export async function scanOneStock(symbol, marketData = {}, weights = null, know
       ? `STEP 1 — Research ${symbol} on merolagani.com / sharesansar.com for CONTEXT ONLY: 52-week high/low, volume, sector, P/E, recent news. Do NOT override the verified price with anything you read.`
       : `STEP 1 — Research ${symbol} on finance.yahoo.com / marketwatch.com for CONTEXT ONLY: 52-week high/low, volume, sector, P/E, recent news/earnings. Do NOT override the verified price with anything you read.`;
 
+  // TIER-2 LIQUIDITY: ground-truth turnover/volume off the verified layer (never
+  // LLM-sourced). Annotation-only — it rides in live_data and feeds the prompt as a
+  // reasoning input, but is kept ORTHOGONAL to confidence (never folded into it).
+  const { turnover: liqTurnover, illiquid } = illiquidityOf(
+    { turnover: verified.liquidity?.turnover, price, volume: verified.liquidity?.volume },
+    MIN_TURNOVER_NPR
+  );
+  // Ground-truth turnover line for the prompt (replaces guessing at "liquidity"): the
+  // model reasons OVER the verified figure, it never sets it. Silent when unknown.
+  const turnoverLine =
+    liqTurnover != null
+      ? `\n  VERIFIED TURNOVER TODAY: ${cur} ${Math.round(liqTurnover).toLocaleString('en-US')}${illiquid ? ' — THIN/illiquid: a retail order may move the book and be hard to exit; weigh tradeability in the risk.' : ''}`
+      : '';
+
   const asOfText = verified.asOf ? new Date(verified.asOf).toISOString() : 'recent';
   const prompt = `You are a disciplined ${ex.marketLabel} swing-trading analyst. Produce ONE trade signal for "${symbol}". Prices are in ${ex.currency} (${cur}).
 
 The current price is VERIFIED and GIVEN below — do NOT look it up, change it, or output a different price. Treat it as ground truth:
-  VERIFIED PRICE: ${cur} ${price}  (as of ${asOfText}${verified.stale ? ', slightly delayed' : ''}; sources: ${verified.sources.join('+')})
+  VERIFIED PRICE: ${cur} ${price}  (as of ${asOfText}${verified.stale ? ', slightly delayed' : ''}; sources: ${verified.sources.join('+')})${turnoverLine}
 
 ${researchLine}
 STEP 2 — Decide the signal using the verified price plus that context and the learned context below.
@@ -257,6 +286,11 @@ Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a
     asOf: verified.asOf ?? null,
     stale: !!verified.stale,
     sources: verified.sources,
+    // TIER-2 liquidity annotation (ground-truth; orthogonal to confidence): the Rupee
+    // turnover and an illiquid flag (true/false/null=unknown) so the UI can flag a thin,
+    // hard-to-exit name without altering the model's conviction.
+    turnover: liqTurnover,
+    illiquid,
     // Fundamentals under the field names the overlay reads (avg180 kept alongside).
     week52_high: f.week52_high ?? null,
     week52_low: f.week52_low ?? null,
@@ -271,7 +305,12 @@ Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a
 
   // Fill any missing/zero targets deterministically from the verified price, so
   // every persisted signal has real sl/target/entry. Keeps the model's verb + why.
-  const t = calcTargets({ entry: r.entry, sl: numOrNull(r.sl), target: numOrNull(r.target) }, price, cur);
+  const t = calcTargets(
+    { entry: r.entry, sl: numOrNull(r.sl), target: numOrNull(r.target) },
+    price,
+    cur,
+    r.signal || 'HOLD'
+  );
 
   return {
     symbol,
@@ -292,21 +331,38 @@ Return ONLY JSON with this exact shape (no prose, no markdown). Do NOT include a
   };
 }
 
-// calcTargets(sig, price, cur): fill missing/zero entry/sl/target deterministically.
-// 5% stop, 8% target, ±1% entry band. `cur` is the exchange currency symbol (default
-// 'Rs' for NEPSE). Returns { entry, sl, target, calculated }.
-function calcTargets(sig, price, cur = 'Rs') {
+// calcTargets(sig, price, cur, direction): fill missing/zero entry/sl/target
+// deterministically, with direction-correct geometry. `cur` is the exchange currency
+// symbol (default 'Rs' for NEPSE). `direction` is the resolved verb (BUY/SELL/HOLD/AVOID).
+//   BUY/HOLD/AVOID (profit UP):   5% stop BELOW, 8% target ABOVE  (byte-for-byte as before)
+//   SELL           (profit DOWN): 5% stop ABOVE (price*1.05), 8%→ target BELOW (price*0.92)
+// Entry is a symmetric ±1% band around the verified price for every direction.
+// Beyond filling a missing/≤0 level, an LLM level on the WRONG SIDE of entry for the
+// direction (an inverted stop/target — e.g. a SELL target ABOVE entry) is treated as
+// missing and recomputed. A merely wide-but-correct-side level is NEVER discarded.
+// Returns { entry, sl, target, calculated }. Exported for unit testing.
+export function calcTargets(sig, price, cur = 'Rs', direction = 'BUY') {
   let calculated = false;
   let sl = numOrNull(sig.sl);
   let target = numOrNull(sig.target);
   let entry = sig.entry;
 
-  if (!sl || sl <= 0) {
-    sl = Math.round(price * 0.95);
+  const isSell = String(direction || '').toUpperCase() === 'SELL';
+  const defSl = isSell ? Math.round(price * 1.05) : Math.round(price * 0.95);
+  const defTarget = isSell ? Math.round(price * 0.92) : Math.round(price * 1.08);
+
+  // Correct-side predicates: a SELL profits DOWN (stop ABOVE entry, target BELOW), a
+  // BUY/HOLD/AVOID profits UP (stop BELOW entry, target ABOVE). A level on the opposite
+  // side is an inverted model output → recompute it.
+  const slWrongSide = sl != null && sl > 0 && (isSell ? sl < price : sl > price);
+  const targetWrongSide = target != null && target > 0 && (isSell ? target > price : target < price);
+
+  if (!sl || sl <= 0 || slWrongSide) {
+    sl = defSl;
     calculated = true;
   }
-  if (!target || target <= 0) {
-    target = Math.round(price * 1.08);
+  if (!target || target <= 0 || targetWrongSide) {
+    target = defTarget;
     calculated = true;
   }
   if (!entry || entry === '' || entry === 'N/A') {
@@ -328,7 +384,7 @@ export function deterministicSignal(stockData = {}, exchange = DEFAULT_EXCHANGE)
   if (price > avg * 1.02) signal = 'WATCH';
   else if (price < avg * 0.98) signal = 'NEUTRAL';
 
-  const t = calcTargets({}, price, currencySymbolFor(exchange));
+  const t = calcTargets({}, price, currencySymbolFor(exchange), signal);
   return {
     symbol: stockData.symbol,
     exchange: getExchange(exchange).id,

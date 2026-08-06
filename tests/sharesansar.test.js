@@ -12,15 +12,33 @@ const BOARD = fx('sharesansar-today-share-price.html');
 const NOW = Date.UTC(2026, 7, 5, 10, 0, 0);
 
 describe('parseSharesansarToday', () => {
-  it('parses LTP + prev close + day range for every row, keyed by symbol', () => {
+  it('parses LTP + prev close + day range + liquidity for every row, keyed by symbol', () => {
     const t = parseSharesansarToday(BOARD);
     // LTP is the price we serve; Prev. Close + the day High/Low ride along (the range
-    // feeds path-dependent outcome resolution — TIER-1 #3).
-    expect(t.NABIL).toEqual({ price: 557.0, prevClose: 558.0, high: 563.0, low: 530.1 });
-    expect(t.NICA).toEqual({ price: 329.1, prevClose: 330.0, high: 346.5, low: 313.5 });
-    expect(t.HBL).toEqual({ price: 197.3, prevClose: 200.0, high: 200.0, low: 196.5 });
-    expect(t.ADBL).toEqual({ price: 320.0, prevClose: 323.0, high: 325.0, low: 319.1 });
-    expect(t.UPPER).toEqual({ price: 195.0, prevClose: 194.1, high: 195.5, low: 192.3 });
+    // feeds path-dependent outcome resolution — TIER-1 #3); Vol + Turnover ride along
+    // as ground-truth LIQUIDITY (TIER-2).
+    expect(t.NABIL).toEqual({ price: 557.0, prevClose: 558.0, high: 563.0, low: 530.1, volume: 75852.0, turnover: 42234263.2 });
+    expect(t.NICA).toEqual({ price: 329.1, prevClose: 330.0, high: 346.5, low: 313.5, volume: 49029.0, turnover: 16185634.1 });
+    expect(t.HBL).toEqual({ price: 197.3, prevClose: 200.0, high: 200.0, low: 196.5, volume: 42244.0, turnover: 8342572.0 });
+    expect(t.ADBL).toEqual({ price: 320.0, prevClose: 323.0, high: 325.0, low: 319.1, volume: 40701.0, turnover: 13047417.0 });
+    expect(t.UPPER).toEqual({ price: 195.0, prevClose: 194.1, high: 195.5, low: 192.3, volume: 54697.0, turnover: 10642740.5 });
+  });
+
+  it('parses Vol + Turnover as ground-truth liquidity (TIER-2)', () => {
+    const t = parseSharesansarToday(BOARD);
+    // Real board values: the Rupee Turnover column + the share Vol column.
+    expect(t.NABIL.turnover).toBe(42234263.2);
+    expect(t.NABIL.volume).toBe(75852.0);
+    // Turnover ≈ VWAP × volume — a sanity floor well above the Rs20-lakh threshold.
+    expect(t.NABIL.turnover).toBeGreaterThan(2_000_000);
+  });
+
+  it('yields null volume + turnover when those columns are absent', () => {
+    const t = parseSharesansarToday(
+      '<thead><tr><th>Symbol</th><th>LTP</th><th>Prev. Close</th></tr></thead>' +
+        '<tbody><tr><td>NOLIQ</td><td>100.50</td><td>99.00</td></tr></tbody>'
+    );
+    expect(t.NOLIQ).toEqual({ price: 100.5, prevClose: 99.0, high: null, low: null, volume: null, turnover: null });
   });
 
   it('reads the DAILY High/Low, not the 52-week High/Low columns', () => {
@@ -39,7 +57,7 @@ describe('parseSharesansarToday', () => {
       .replace('<th width="10px">S.No</th>', '<th>New</th><th width="10px">S.No</th>')
       .replace(/<td class="danger-index">167<\/td>/, '<td>x</td><td class="danger-index">167</td>');
     const t = parseSharesansarToday(shifted);
-    expect(t.NABIL).toEqual({ price: 557.0, prevClose: 558.0, high: 563.0, low: 530.1 });
+    expect(t.NABIL).toEqual({ price: 557.0, prevClose: 558.0, high: 563.0, low: 530.1, volume: 75852.0, turnover: 42234263.2 });
   });
 
   it('yields null high/low when the range columns are absent', () => {
@@ -47,7 +65,7 @@ describe('parseSharesansarToday', () => {
       '<thead><tr><th>Symbol</th><th>LTP</th><th>Prev. Close</th></tr></thead>' +
         '<tbody><tr><td>NORANGE</td><td>100.50</td><td>99.00</td></tr></tbody>'
     );
-    expect(t.NORANGE).toEqual({ price: 100.5, prevClose: 99.0, high: null, low: null });
+    expect(t.NORANGE).toEqual({ price: 100.5, prevClose: 99.0, high: null, low: null, volume: null, turnover: null });
   });
 
   it('drops BOTH range extremes when the pair is inconsistent (high < low)', () => {
@@ -55,7 +73,7 @@ describe('parseSharesansarToday', () => {
       '<thead><tr><th>Symbol</th><th>High</th><th>Low</th><th>LTP</th></tr></thead>' +
         '<tbody><tr><td>BADR</td><td>90</td><td>110</td><td>100</td></tr></tbody>'
     );
-    expect(t.BADR).toEqual({ price: 100, prevClose: null, high: null, low: null });
+    expect(t.BADR).toEqual({ price: 100, prevClose: null, high: null, low: null, volume: null, turnover: null });
   });
 
   it('returns {} on junk, never throws', () => {
@@ -76,7 +94,7 @@ describe('parseSharesansarToday', () => {
         '<tr><td></td><td>50</td><td>49</td></tr>' +
         '</tbody>'
     );
-    expect(t.GOOD).toEqual({ price: 100.5, prevClose: 99.0, high: null, low: null });
+    expect(t.GOOD).toEqual({ price: 100.5, prevClose: 99.0, high: null, low: null, volume: null, turnover: null });
     expect(t.BADP).toBeUndefined();
     expect(t.NOPX).toBeUndefined();
     expect(Object.keys(t)).toEqual(['GOOD']);
@@ -87,7 +105,7 @@ describe('parseSharesansarToday', () => {
       '<thead><tr><th>Symbol</th><th>LTP</th></tr></thead>' +
         '<tbody><tr><td>SOLO</td><td>42.00</td></tr></tbody>'
     );
-    expect(t.SOLO).toEqual({ price: 42.0, prevClose: null, high: null, low: null });
+    expect(t.SOLO).toEqual({ price: 42.0, prevClose: null, high: null, low: null, volume: null, turnover: null });
   });
 });
 
