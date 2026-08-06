@@ -319,7 +319,16 @@ async function fetchSharesansar(symbol) {
     const price = Number(row.price);
     if (!Number.isFinite(price) || price <= 0) return null;
     const prevClose = Number.isFinite(row.prevClose) && row.prevClose > 0 ? row.prevClose : null;
-    return { symbol: s, price, prevClose, asOf: Date.now(), source: 'sharesansar' };
+    // TIER-1 #3: the day RANGE rides along for path-dependent outcome resolution. Only a
+    // consistent pair survives (both >0, high>=low); anything else → null (never a
+    // half-parsed extreme). The verified-price core treats range as metadata — it never
+    // gates whether the PRICE verified.
+    const h = Number(row.high);
+    const l = Number(row.low);
+    const rangeOk = Number.isFinite(h) && Number.isFinite(l) && h > 0 && l > 0 && h >= l;
+    const high = rangeOk ? h : null;
+    const low = rangeOk ? l : null;
+    return { symbol: s, price, prevClose, high, low, asOf: Date.now(), source: 'sharesansar' };
   } catch {
     return null;
   }

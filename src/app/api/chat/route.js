@@ -8,6 +8,7 @@ import { getUserFromRequest } from '@/lib/auth';
 import { checkAndBumpChatQuota } from '@/lib/userQuota';
 import { getUserEntitlements } from '@/lib/entitlements';
 import { getUserSupabase } from '@/lib/supabase';
+import { SEBON_LEVY_PCT, DP_FEE } from '@/lib/charges';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -111,7 +112,7 @@ Open positions (${openPos.length}): ${portStr}.
 Today's signals: ${sigStr}.
 Market: ${mktStr}.
 Watchlist: ${watchlist.join(', ') || 'empty'}.
-${learnedBlock}NEPSE charges: broker 0.4% (min Rs10), SEBON 0.0015%, DP Rs25, CGT 7.5% (<1yr) / 5% (>=1yr).
+${learnedBlock}NEPSE charges (each leg): broker commission is TIERED on the whole transaction value — <=50k 0.36%, 50k-500k 0.33%, 500k-2M 0.31%, 2M-10M 0.27%, >10M 0.24% (min Rs 10/txn); SEBON levy ${SEBON_LEVY_PCT}%; DP Rs ${DP_FEE}/scrip. CGT on gains only: 7.5% (<1yr) / 5% (>=1yr).
 Be concise and concrete — at most 5 short lines. Search the web for live prices/news when the question needs current data.`;
 
   const reply = await callLLM(message, { system, webSearch: true, maxTokens: 700 });

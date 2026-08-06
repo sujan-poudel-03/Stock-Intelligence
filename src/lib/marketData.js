@@ -112,7 +112,46 @@ export function reconcile(quotes, opts = {}) {
   // untouched). normalizeQuote deliberately drops them, so we read them back from the
   // raw `quotes` by matching the surviving source(s), first non-null wins.
   const fundamentals = pickFundamentals(quotes, sources);
-  return { verified: true, price, asOf: asOf ?? null, ageMs, stale, sources, fundamentals };
+  // TIER-1 #3: the day RANGE [high, low] rides along as best-effort METADATA off the
+  // winning provider(s), for path-dependent outcome resolution. Like fundamentals it
+  // NEVER gates whether the price verified (the checks above are untouched) — an
+  // implausible/inconsistent range is simply dropped to null.
+  const range = pickRange(quotes, sources, price, o);
+  return { verified: true, price, asOf: asOf ?? null, ageMs, stale, sources, fundamentals, range };
+}
+
+// pickRange(rawQuotes, sources, price, o): from the reconciled winning source list, the
+// first raw quote carrying a day range that is INTERNALLY CONSISTENT (low>0, high>=low,
+// and the verified price sits within [low, high]) AND PLAUSIBLE vs its prevClose (same
+// maxDailyMovePct guard, CA-adjusted base when a caFactor is supplied). Pure, never
+// throws — a bad range degrades to null (the resolver falls back to a degenerate spot
+// range), never a wrong extreme.
+function pickRange(quotes, sources, price, o) {
+  try {
+    const p = num(price);
+    for (const src of sources || []) {
+      const q = (quotes || []).find((x) => x && x.source === src && x.high != null && x.low != null);
+      if (!q) continue;
+      const high = num(q.high);
+      const low = num(q.low);
+      if (high == null || low == null) continue;
+      // Internal consistency: a real day range brackets the verified price.
+      if (!(low > 0 && high >= low && (p == null || (low <= p && p <= high)))) continue;
+      // Plausibility vs prevClose — reuse the maxDailyMovePct move guard on both extremes.
+      const prevClose = num(q.prevClose ?? q.previousClose);
+      if (prevClose != null && prevClose > 0) {
+        const caFactor = Number(o.caFactor);
+        const base = Number.isFinite(caFactor) && caFactor > 0 ? prevClose * caFactor : prevClose;
+        const hiMove = Math.abs((high - base) / base) * 100;
+        const loMove = Math.abs((low - base) / base) * 100;
+        if (hiMove > o.maxDailyMovePct || loMove > o.maxDailyMovePct) continue;
+      }
+      return { high, low };
+    }
+  } catch {
+    /* metadata only — never break a verified price */
+  }
+  return null;
 }
 
 // pickFundamentals(rawQuotes, sources): from the reconciled winning source list, the

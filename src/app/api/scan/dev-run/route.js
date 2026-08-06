@@ -3,6 +3,8 @@ import { scanMarket, runDiscovery, scanOneStock, runBrief } from '@/lib/scan';
 import { getWeightContext } from '@/lib/calibration';
 import { checkOutcomes } from '@/lib/outcomes';
 import { unionWatchlistSymbols } from '@/lib/watchlistUnion';
+import { outcomeRealismColumnsReady } from '@/lib/schemaFlags';
+import { effectiveMaxHoldDays } from '@/lib/outcomeResolution';
 import { KV } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
@@ -65,7 +67,7 @@ export async function GET() {
             signals.push(signal);
             completed += 1;
 
-            await supabase.from('signals').insert({
+            const row = {
               scan_id: scanId,
               symbol: signal.symbol,
               signal: signal.signal,
@@ -83,7 +85,15 @@ export async function GET() {
               live_data: signal.live_data,
               outcome: 'PENDING',
               created_at: new Date().toISOString(),
-            });
+            };
+            // TIER-1 #3: stamp the time-stop horizon at insert (parity with the worker),
+            // gated so an unmigrated DB inserts byte-for-byte as before.
+            if (await outcomeRealismColumnsReady()) {
+              row.max_hold_days = effectiveMaxHoldDays(signal.hold);
+              row.peak_high = null;
+              row.trough_low = null;
+            }
+            await supabase.from('signals').insert(row);
 
             emit({ step: 'stock', symbol: signal.symbol, signal: signal.signal, price: signal.price });
           } catch (err) {

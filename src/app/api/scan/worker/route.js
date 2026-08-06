@@ -4,7 +4,8 @@ import { scanOneStock, deterministicSignal } from '@/lib/scan';
 import { getVerifiedPrice } from '@/lib/marketProviders';
 import { getWeightContext } from '@/lib/calibration';
 import { normalizeExchange, DEFAULT_EXCHANGE } from '@/lib/exchanges';
-import { exchangeColumnReady } from '@/lib/schemaFlags';
+import { exchangeColumnReady, outcomeRealismColumnsReady } from '@/lib/schemaFlags';
+import { effectiveMaxHoldDays } from '@/lib/outcomeResolution';
 import { runBackground, triggerRoute } from '@/lib/background';
 import { logEvent } from '@/lib/events';
 import { humanizeError } from '@/lib/humanizeError';
@@ -244,6 +245,14 @@ async function insertSignal(supabase, scanId, signal) {
     created_at: new Date().toISOString(),
   };
   if (await exchangeColumnReady()) row.exchange = signal.exchange || 'NEPSE';
+  // TIER-1 #3: stamp the time-stop horizon (clamped, hold-derived) at insert so the
+  // resolver's EXPIRE path has a fixed reference; init the accumulated extremes null.
+  // Gated on the outcome-realism columns — on an unmigrated DB the insert is unchanged.
+  if (await outcomeRealismColumnsReady()) {
+    row.max_hold_days = effectiveMaxHoldDays(signal.hold);
+    row.peak_high = null;
+    row.trough_low = null;
+  }
   await supabase.from('signals').insert(row);
 }
 

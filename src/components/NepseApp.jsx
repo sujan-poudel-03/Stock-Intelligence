@@ -1176,8 +1176,11 @@ export default function NepseApp() {
                     {[
                       { l: 'win rate', v: fmtRate(track.overall.winRate), c: '#3b82f6' },
                       { l: 'conservative', v: fmtRate(track.overall.confidence), c: '#8b5cf6' },
-                      { l: 'avg return', v: fmtRet(track.overall.avgReturn), c: track.overall.avgReturn >= 0 ? '#10b981' : '#ef4444' },
+                      // Net-of-charges is the HEADLINE; gross is shown alongside (TIER-1 #3).
+                      { l: 'avg net', v: fmtRet(track.overall.avgNetReturn), c: track.overall.avgNetReturn >= 0 ? '#10b981' : '#ef4444' },
+                      { l: 'avg gross', v: fmtRet(track.overall.avgReturn), c: track.overall.avgReturn >= 0 ? '#10b981' : '#ef4444' },
                       { l: 'record', v: track.overall.wins + 'W / ' + track.overall.losses + 'L', c: '#e2e8f0' },
+                      { l: 'expired', v: String(track.expired ? track.expired.count : 0), c: '#c08a2c' },
                       { l: 'pending', v: String(track.pending), c: '#4a5568' },
                     ].map(function (x) {
                       return (
@@ -1195,7 +1198,7 @@ export default function NepseApp() {
                       return (
                         <div key={d} style={{ flex: 1, background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px' }}>
                           <div style={{ fontSize: 10, fontWeight: 600, color: d === 'BUY' ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace', marginBottom: 4 }}>{d}</div>
-                          <div style={{ fontSize: 10, color: '#8899b4' }}>{s.trades ? (fmtRate(s.winRate) + ' win · ' + s.wins + 'W/' + s.losses + 'L · avg ' + fmtRet(s.avgReturn)) : 'no trades yet'}</div>
+                          <div style={{ fontSize: 10, color: '#8899b4' }}>{s.trades ? (fmtRate(s.winRate) + ' win · ' + s.wins + 'W/' + s.losses + 'L · net ' + fmtRet(s.avgNetReturn) + ' / gross ' + fmtRet(s.avgReturn)) : 'no trades yet'}</div>
                         </div>
                       );
                     })}
@@ -1215,16 +1218,19 @@ export default function NepseApp() {
                     </div>
                   )}
 
-                  <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', margin: '4px 0 8px', fontFamily: 'Inter,sans-serif' }}>Recent outcomes</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', margin: '4px 0 8px', fontFamily: 'Inter,sans-serif' }}>Recent outcomes <span style={{ fontWeight: 400, color: '#4a5568' }}>· return shown NET of NEPSE charges</span></div>
                   {track.recent.map(function (r, i) {
-                    var win = r.outcome === 'WIN';
+                    // WIN green · LOSS red · EXPIRE (time-stop) amber — the honest mix.
+                    var oc = r.outcome === 'WIN' ? '#10b981' : r.outcome === 'EXPIRE' ? '#c08a2c' : '#ef4444';
+                    // Net-of-charges is the headline figure; fall back to gross when absent.
+                    var shownRet = r.netReturnPct != null ? r.netReturnPct : r.returnPct;
                     return (
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid #0f1420' }}>
-                        <span style={{ fontSize: 9, fontWeight: 700, color: win ? '#10b981' : '#ef4444', background: (win ? '#10b981' : '#ef4444') + '22', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace', width: 34, textAlign: 'center' }}>{r.outcome}</span>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: oc, background: oc + '22', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace', width: 42, textAlign: 'center' }}>{r.outcome}</span>
                         <span style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', minWidth: 56 }}>{r.symbol}</span>
-                        <span style={{ fontSize: 9, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{r.signal}</span>
+                        <span style={{ fontSize: 9, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{r.signal}{r.exitReason ? ' · ' + r.exitReason : ''}</span>
                         <span style={{ fontSize: 9, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{(r.entry != null ? 'Rs' + r.entry : '-') + '→' + (r.exit != null ? 'Rs' + r.exit : '-')}</span>
-                        <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, color: (r.returnPct || 0) >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{r.returnPct != null ? fmtRet(r.returnPct) : '-'}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, color: (shownRet || 0) >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{shownRet != null ? fmtRet(shownRet) : '-'}</span>
                       </div>
                     );
                   })}

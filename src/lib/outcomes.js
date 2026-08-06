@@ -6,7 +6,9 @@ import { logEvent } from './events.js';
 import { sendAlert } from './email.js';
 import { normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
 import { getActiveAdjustment, applyAdjustment } from './corporateActions.js';
-import { corporateActionsReady, signalCaColumnsReady } from './schemaFlags.js';
+import { corporateActionsReady, signalCaColumnsReady, outcomeRealismColumnsReady } from './schemaFlags.js';
+import { resolveFirstTouch, effectiveMaxHoldDays } from './outcomeResolution.js';
+import { netReturn, NOTIONAL_PRINCIPAL } from './charges.js';
 
 // TIER-1 #1: a signal suppressed near a corporate-action ex-window that never resolves
 // can't sit PENDING forever — after this many hold-days it is VOIDed (terminal escape,
@@ -70,6 +72,17 @@ export async function checkOutcomes() {
     console.error('corporate-action prepass failed (continuing without CA):', err?.message || err);
   }
 
+  // TIER-1 #3: outcome-realism awareness (path-dependent WIN/LOSS + time-stop + net).
+  // Gated on the new columns; on an unmigrated DB this is false and the whole realism
+  // path is skipped, so resolution is byte-for-byte today (spot-only, gross-only, no
+  // EXPIRE). Wrapped best-effort so a probe failure can never break resolution.
+  let realismReady = false;
+  try {
+    realismReady = await outcomeRealismColumnsReady();
+  } catch (err) {
+    console.error('outcome-realism probe failed (continuing without it):', err?.message || err);
+  }
+
   const prices = await fetchLatestPrices(pending, caFactorByKey);
 
   const resolved = [];
@@ -77,7 +90,8 @@ export async function checkOutcomes() {
 
   for (const sig of pending) {
     const exchange = sig.exchange || DEFAULT_EXCHANGE;
-    const price = prices[priceKey(sig.symbol, exchange)];
+    const priceData = prices[priceKey(sig.symbol, exchange)];
+    const price = priceData ? priceData.price : null;
 
     const adj = adjBySig.get(sig.id) || null;
     const hasCA = !!(adj && adj.actions.length > 0);
@@ -127,6 +141,17 @@ export async function checkOutcomes() {
           ca_note: caNote(adj),
         })
         .eq('id', sig.id);
+    }
+
+    // TIER-1 #3: NON-CA path with the realism columns present → path-dependent WIN/LOSS
+    // (first touch over the verified day range + accumulated extremes), a time-stop
+    // EXPIRE, and a net-of-charges return alongside gross. First-touch is DELIBERATELY
+    // scoped to the non-CA path: under a computable CA the spot-vs-adjusted-level check
+    // below stays byte-for-byte (running extremes ignored) to avoid a cross-ex-date
+    // false WIN. On an unmigrated DB (realismReady false) this diverts nowhere.
+    if (!(hasCA && adj.computable) && realismReady) {
+      await resolveRealism(supabase, sig, priceData, exchange, nowIso, resolved);
+      continue;
     }
 
     let outcome = null;
@@ -226,6 +251,132 @@ async function voidSignal(supabase, sig, nowIso, actions) {
   }
 }
 
+// resolveRealism(): TIER-1 #3 NON-CA resolution. Resolves a signal path-dependently over
+// the verified day range (ground-truth high/low), accumulating cross-day extremes so a
+// missed intraday touch is not lost; applies a time-stop (EXPIRE) at the hold horizon;
+// and records a net-of-charges return alongside gross. Gated by the caller on the new
+// columns being present. Best-effort side-channels (alert/knowledge/event) as elsewhere.
+//   - target/stop touch → WIN/LOSS at the touched level (stop-first tie-break).
+//   - no touch, hold expired → EXPIRE at verified spot (mark-to-market).
+//   - no touch, not expired → persist accumulated extremes, stay PENDING (returns without
+//     pushing to resolved).
+// Learning is fed WIN/LOSS as resolved; an EXPIRE derives its learning label from the
+// GROSS return sign (unchanged series semantics). VOID (CA branch) stays excluded.
+async function resolveRealism(supabase, sig, priceData, exchange, nowIso, resolved) {
+  const price = priceData ? priceData.price : null;
+  if (price == null) return;
+  const entry = numOrNull(sig.price);
+  const target = numOrNull(sig.target);
+  const sl = numOrNull(sig.sl);
+  const direction = sig.signal; // 'BUY' | 'SELL'
+
+  // Verified day range (ground truth); a degenerate [spot, spot] when no source gave one.
+  const todayHigh = numOrNull(priceData.high) ?? price;
+  const todayLow = numOrNull(priceData.low) ?? price;
+
+  // Accumulate cross-day extremes so a touch on a day between runs is not missed.
+  const prevPeak = numOrNull(sig.peak_high);
+  const prevTrough = numOrNull(sig.trough_low);
+  const peakHigh = prevPeak != null ? Math.max(prevPeak, todayHigh) : todayHigh;
+  const troughLow = prevTrough != null ? Math.min(prevTrough, todayLow) : todayLow;
+
+  // First touch on TODAY's range; if untouched, on the accumulated extremes (missed days).
+  let touch = resolveFirstTouch({ direction, target, sl, high: todayHigh, low: todayLow });
+  if (!touch.outcome) {
+    touch = resolveFirstTouch({ direction, target, sl, high: peakHigh, low: troughLow });
+  }
+
+  let outcome = null;
+  let exitReason = null;
+  let exitPrice = null;
+  if (touch.outcome) {
+    outcome = touch.outcome; // WIN | LOSS
+    exitReason = touch.exitReason; // TARGET | STOP
+    exitPrice = touch.exitPrice;
+  } else {
+    // Time-stop: stored horizon (stamped at insert) or hold-derived, clamped.
+    const maxHold = numOrNull(sig.max_hold_days) ?? effectiveMaxHoldDays(sig.hold);
+    const hd = holdDays(sig.created_at, nowIso);
+    if (hd != null && hd >= maxHold) {
+      outcome = 'EXPIRE';
+      exitReason = 'EXPIRE';
+      exitPrice = price; // mark-to-market at the verified spot
+    } else {
+      // Not resolved — persist the accumulated extremes so the next run continues from them.
+      await supabase.from('signals').update({ peak_high: peakHigh, trough_low: troughLow }).eq('id', sig.id);
+      return;
+    }
+  }
+
+  const hd = holdDays(sig.created_at, nowIso);
+  // Gross return keeps the existing series semantics: (exit - entry)/entry * 100.
+  const returnPct = entry && entry !== 0 ? ((exitPrice - entry) / entry) * 100 : 0;
+
+  // Net-of-charges is the track-record HEADLINE, scoped to NEPSE (NYSE net == gross).
+  let netReturnPct = returnPct;
+  if (normalizeExchange(exchange) === DEFAULT_EXCHANGE) {
+    netReturnPct = netReturn({ entry, exit: exitPrice, direction, holdDays: hd, notional: NOTIONAL_PRINCIPAL }).netPct;
+  }
+
+  // EXPIRE feeds the learning loop by GROSS return sign; WIN/LOSS feed as resolved.
+  // Direction-aware: a SELL profits when price FALLS, so its raw (exit-entry)/entry gross
+  // is NEGATIVE on a win. Classifying an EXPIRE on the raw sign would invert every SELL
+  // expiry (a profitable short logged as LOSS) and poison the SELL_<sector> weight slice,
+  // so classify on the DIRECTIONAL gross sign (raw for BUY, negated for SELL).
+  const directionalGross = String(direction).toUpperCase() === 'SELL' ? -returnPct : returnPct;
+  const learningOutcome = outcome === 'EXPIRE' ? (directionalGross > 0 ? 'WIN' : 'LOSS') : outcome;
+
+  await supabase
+    .from('signals')
+    .update({
+      outcome,
+      exit_price: exitPrice,
+      outcome_at: nowIso,
+      return_pct: returnPct,
+      net_return_pct: netReturnPct,
+      exit_reason: exitReason,
+      peak_high: peakHigh,
+      trough_low: troughLow,
+    })
+    .eq('id', sig.id);
+
+  await supabase.from('outcomes').insert({
+    signal_id: sig.id,
+    symbol: sig.symbol,
+    outcome,
+    entry_price: entry,
+    exit_price: exitPrice,
+    return_pct: returnPct,
+    net_return_pct: netReturnPct,
+    exit_reason: exitReason,
+    hold_days: hd,
+    created_at: nowIso,
+  });
+
+  // Learning (statistical + qualitative), scoped to the signal's exchange.
+  await updateWeights(sig.symbol, sig.sector, sig.signal, learningOutcome, returnPct, exchange);
+  await recordOutcomeKnowledge(sig, learningOutcome, exitPrice, returnPct);
+
+  // Alert only on a genuine target/stop touch (EXPIRE is neither hit nor breach).
+  if (outcome === 'WIN' || outcome === 'LOSS') {
+    await sendAlert(
+      outcome === 'WIN' ? 'TARGET_HIT' : 'SL_BREACH',
+      sig.symbol,
+      exitPrice,
+      outcome === 'WIN' ? target : sl
+    );
+  }
+
+  await logEvent(supabase, {
+    type: outcome === 'WIN' ? 'outcome_win' : outcome === 'LOSS' ? 'outcome_loss' : 'outcome_expire',
+    symbol: sig.symbol,
+    message: `${sig.symbol} ${sig.signal} → ${outcome} (${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}% gross / ${netReturnPct >= 0 ? '+' : ''}${netReturnPct.toFixed(1)}% net${exitReason ? `, ${exitReason}` : ''}) at ${exitPrice}`,
+    data: { signal: sig.signal, outcome, exitReason, price: exitPrice, returnPct, netReturnPct, target, sl },
+  });
+
+  resolved.push({ symbol: sig.symbol, outcome, price: exitPrice, returnPct, netReturnPct, exitReason });
+}
+
 // caNote(adj): a short human note describing the applied corporate-action adjustment.
 function caNote(adj) {
   const types = [...new Set((adj.actions || []).map((a) => a.action_type))].join(',');
@@ -262,7 +413,13 @@ async function fetchLatestPrices(pending, caFactorByKey = {}) {
       try {
         const caFactor = caFactorByKey[key];
         const r = await getVerifiedPrice(symbol, { exchange, caFactor });
-        out[key] = r.verified ? r.price : null;
+        // TIER-1 #3: carry the verified day RANGE alongside the spot price so the
+        // resolver can catch an intraday/cross-day TARGET or STOP touch. `range` is
+        // best-effort metadata off the verified layer (null when no source supplied a
+        // consistent, plausible one) — the price still gates verification as before.
+        out[key] = r.verified
+          ? { price: r.price, high: r.range?.high ?? null, low: r.range?.low ?? null }
+          : null;
       } catch {
         out[key] = null;
       }

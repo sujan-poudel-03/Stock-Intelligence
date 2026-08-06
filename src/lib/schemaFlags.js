@@ -80,3 +80,33 @@ export function __resetCorporateActionsProbe() {
   caTableProbe = null;
   caColumnsProbe = null;
 }
+
+// --- Outcome realism (TIER-1 #3) -------------------------------------------
+// Same discipline as signalCaColumnsReady: until 20260807000000_outcome_realism.sql
+// is applied, touching the new signal/outcome columns (peak_high/trough_low/
+// net_return_pct/max_hold_days/exit_reason) would ERROR and break resolution + insert.
+// Every read/write of these columns is gated on this probe so an unmigrated DB behaves
+// byte-for-byte as today (spot-only resolution, gross-only return, no EXPIRE, no horizon).
+
+let outcomeRealismProbe = null;
+
+// outcomeRealismColumnsReady(): true when signals carry the outcome-realism columns.
+// Probed via peak_high. Cached per process, mirroring signalCaColumnsReady.
+export async function outcomeRealismColumnsReady() {
+  if (outcomeRealismProbe) return outcomeRealismProbe;
+  outcomeRealismProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('signals').select('peak_high').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return outcomeRealismProbe;
+}
+
+// Test-only: reset the memoized outcome-realism probe.
+export function __resetOutcomeRealismProbe() {
+  outcomeRealismProbe = null;
+}
