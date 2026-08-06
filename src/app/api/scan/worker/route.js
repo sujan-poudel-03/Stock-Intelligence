@@ -32,9 +32,43 @@ export const POST = withGuard(async (request) => {
   const supabase = getServiceSupabase();
   const symbol = request.nextUrl.searchParams.get('symbol');
   const force = request.nextUrl.searchParams.get('force') === 'true';
+  const origin = request.nextUrl.origin;
 
   // Reclaim stale running jobs (worker died mid-flight).
   await reclaimStale(supabase);
+
+  // LOCAL-DRAIN MODE (off Vercel, general queue drain only). On Vercel each hop is
+  // one job then a detached self-chain, kept alive by waitUntil. Off Vercel there is
+  // no waitUntil, so the worker->worker hand-off is dropped and the queue never
+  // advances past 0/N (see background.js). Instead, drain the WHOLE queue inside this
+  // one invocation: claim + process each job sequentially, then fire the brief once at
+  // the end. The single-symbol force retry (?symbol=X&force=true) is deliberately
+  // excluded — it keeps the exact one-job + self-chain path below.
+  if (!process.env.VERCEL && !symbol) {
+    const scanIds = new Set();
+    // Sequential drain. processJob is called with chain:false so it does NOT self-fire
+    // another worker (this loop owns continuation); the per-job SCAN_JOB_TIMEOUT_MS,
+    // optimistic claim, retry ceiling and pending/permanently_failed branches all still
+    // apply per iteration. A failed job returned to 'pending' is re-claimed here on the
+    // next pass until it resolves or hits MAX_ATTEMPTS, so the loop always terminates.
+    for (;;) {
+      const job = await claimJob(supabase, { symbol: null, force: false });
+      if (!job) break;
+      scanIds.add(job.scan_id);
+      await processJob(supabase, job, origin, { chain: false });
+    }
+
+    // Terminal hand-off: fire each drained scan's brief exactly once. Awaited so the
+    // off-Vercel triggerRoute (which now awaits the fetch) actually lands the call
+    // before we respond. The queue is empty here, so this replaces chainNext's
+    // "any work left? -> worker" branch — no worker self-fire, no duplicate brief.
+    const auth = process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {};
+    for (const scanId of scanIds) {
+      await triggerRoute('/api/scan/brief', { headers: auth, body: { scan_id: scanId }, origin });
+    }
+
+    return NextResponse.json({ drained: scanIds.size, scans: [...scanIds] });
+  }
 
   const job = await claimJob(supabase, { symbol, force });
   if (!job) {
@@ -43,7 +77,6 @@ export const POST = withGuard(async (request) => {
 
   // Respond immediately; process in the background (await locally). Carry the
   // request origin so the self-chain targets the dev server's actual port.
-  const origin = request.nextUrl.origin;
   await runBackground(() => processJob(supabase, job, origin));
 
   return NextResponse.json({ claimed: job.symbol, job_id: job.id });
@@ -96,7 +129,11 @@ async function claimJob(supabase, { symbol, force }) {
   return null;
 }
 
-async function processJob(supabase, job, origin) {
+// `chain` controls the terminal continuation: on Vercel / single-symbol paths it is
+// true (self-fire the next worker or the brief via chainNext). In local-drain mode
+// the POST loop passes chain:false so this job does NOT self-fire another worker —
+// the loop handles continuation and fires the brief once at the end.
+async function processJob(supabase, job, origin, { chain = true } = {}) {
   const scanId = job.scan_id;
 
   // Read this scan's market context + exchange once — both the budget-saver and the
@@ -147,7 +184,7 @@ async function processJob(supabase, job, origin) {
         message: `${job.symbol} skipped — budget reached, no prior price`,
       });
     }
-    await chainNext(supabase, scanId, origin);
+    if (chain) await chainNext(supabase, scanId, origin);
     return;
   }
 
@@ -226,8 +263,9 @@ async function processJob(supabase, job, origin) {
     }
   }
 
-  // Chain: more work -> next worker; otherwise -> brief.
-  await chainNext(supabase, scanId, origin);
+  // Chain: more work -> next worker; otherwise -> brief. Skipped in local-drain mode
+  // (the POST loop owns continuation and fires the brief once at the end).
+  if (chain) await chainNext(supabase, scanId, origin);
 }
 
 // Race a promise against a timeout so a hung external call can't block the worker

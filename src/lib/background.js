@@ -18,7 +18,7 @@ export async function runBackground(work) {
 // (e.g. cron -> worker -> brief). Never throws into the caller.
 // Pass `origin` (e.g. request.nextUrl.origin) so the self-call targets the port
 // the server actually bound to — `next dev` bumps to 3001+ when 3000 is taken.
-export function triggerRoute(path, { method = 'POST', body, headers, origin } = {}) {
+export async function triggerRoute(path, { method = 'POST', body, headers, origin } = {}) {
   const url = `${getBaseUrl(origin)}${path}`;
   const promise = fetch(url, {
     method,
@@ -29,9 +29,19 @@ export function triggerRoute(path, { method = 'POST', body, headers, origin } = 
   });
 
   if (process.env.VERCEL) {
+    // Production: the container freezes on response, so waitUntil retains the
+    // detached self-call within the function budget. Return the promise un-awaited
+    // exactly as before — byte-for-byte the current Vercel one-hop-per-invocation.
     waitUntil(promise);
+    return promise;
   }
-  return promise;
+
+  // Off Vercel (next dev / self-host) there is no waitUntil; a `return promise`
+  // that the caller ignores leaves a dangling fetch with no live continuation, and
+  // next dev tears down the request context before it flushes — the self-call is
+  // dropped and the chain stalls. Awaiting keeps a live continuation on the (never
+  // frozen) local event loop, so the hand-off actually lands.
+  await promise;
 }
 
 // Resolve the app's own base URL for self-calls. An explicit `origin` from the

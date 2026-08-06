@@ -1367,7 +1367,7 @@ export default function NepseApp() {
                 <button onClick={function () { addToWatchlist(wlInput, 'manual'); setWlInput(''); }} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #10b981', background: 'transparent', color: '#10b981', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', flexShrink: 0 }}>add</button>
               </div>
               {watchlist.length === 0 ? (
-                <div style={{ fontSize: 11, color: '#4a5568', padding: '20px 0' }}>Watchlist empty. Add symbols above, or let the agent auto-promote discovered movers.</div>
+                <div style={{ fontSize: 11, color: '#4a5568', padding: '20px 0' }}>Watchlist empty. Add a symbol above to track it — the agent scans your watchlist plus daily discovery each run.</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 6, marginBottom: 16 }}>
                   {watchlist.map(function (sym) {
@@ -1526,7 +1526,7 @@ export default function NepseApp() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Auto-add threshold</div>
-                    <div style={{ fontSize: 10, color: '#4a5568', marginTop: 2 }}>Which signal strength triggers auto-add to watchlist</div>
+                    <div style={{ fontSize: 10, color: '#4a5568', marginTop: 2 }}>Which signal strength triggers auto-add to watchlist (inactive in this version)</div>
                   </div>
                   <SegBtn value={settings.autoadd_threshold} options={[['BUY', 'BUY only'], ['BUY_WATCH', 'BUY + WATCH']]} onChange={function (v) { saveSettings(Object.assign({}, settings, { autoadd_threshold: v })); }} />
                 </div>
@@ -1538,7 +1538,7 @@ export default function NepseApp() {
                   <div style={{ width: 28, height: 28, borderRadius: 8, background: '#ef444418', border: '1px solid #ef444433', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>-</div>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Auto-Remove</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Removes stale stocks from watchlist automatically</div>
+                    <div style={{ fontSize: 10, color: '#4a5568' }}>Removes stale stocks from watchlist automatically (inactive in this version)</div>
                   </div>
                   <div style={{ marginLeft: 'auto' }}>
                     <ToggleBtn on={settings.autoremove_on} onClick={function () { saveSettings(Object.assign({}, settings, { autoremove_on: !settings.autoremove_on })); }} />
