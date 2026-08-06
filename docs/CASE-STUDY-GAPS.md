@@ -115,3 +115,35 @@ single-source verification) and is the first thing a knowledgeable NEPSE user ca
 aren't in craftsmanship — they're the distance between a clean generic signal pipeline
 and the specific, messy mechanics of the Nepal Stock Exchange. Closing Tier 1 turns
 "a working build" into "a track record you can stake the brand on."
+
+---
+
+## Update — 🔴 Tier 1 CLOSED (2026-08-06)
+
+All three financial-truth gaps are implemented, tested, migrated to prod, and shipped:
+
+- ✅ **#1 Corporate-action awareness** (`4560a23`). Global `corporate_actions` table +
+  deterministic, LLM-free merolagani announcement scraper. Ex-dates adjust target/stop
+  from immutable originals (idempotent); uncomputable → SUPPRESS (never a false LOSS);
+  stuck-too-long → VOID (excluded from learning). Plausibility guard accepts the
+  mechanical ex-move via an opt-in `caFactor`. Live-validated (NORVIC bonus + dividend).
+- ✅ **#2 sharesansar 2nd live source** (`710e70c`). Cross-source agreement now actually
+  runs; observed spread vs merolagani was 0.00% across 10 liquid symbols, so the 1.0%
+  tolerance is unchanged. Board-scrape (fetch-once-per-cycle, header-mapped). Owner
+  activates with `MARKET_DATA_SOURCES=merolagani,sharesansar`.
+- ✅ **#3 Realistic outcomes** (`c816f7c`). Path-dependent WIN/LOSS at daily High/Low
+  (stop-first tie-break), a time-stop (`EXPIRE` at the hold horizon), and net-of-charges
+  return (tiered NEPSE commission + SEBON + DP + CGT on a Rs 100k notional) — net is now
+  the track-record headline, gross shown alongside. Composes with #1 (first-touch scoped
+  to the non-CA path). Also fixed a 10× SEBON-rate error in the chat prompt.
+
+Every change is gated behind schema-flag probes (byte-for-byte on an unmigrated DB) and
+never throws into the scan/outcome flow.
+
+### New follow-up discovered during #3 (pre-existing, not yet fixed)
+- **SELL-direction target geometry.** `calcTargets` (`src/lib/scan.js`) auto-fills
+  target ABOVE / stop BELOW entry regardless of direction — correct for BUY, backwards
+  for a SELL. So SELL signals with auto-filled levels are mis-targeted (LLM-supplied SELL
+  levels are fine, and #3's resolver + EXPIRE learning label are now direction-aware).
+  Retail can't short NEPSE, so a SELL is really "exit/avoid" guidance — but the geometry
+  should still be direction-correct. Needs its own small fix. **Tier 2 candidate.**
