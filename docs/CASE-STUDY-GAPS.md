@@ -146,4 +146,26 @@ never throws into the scan/outcome flow.
   for a SELL. So SELL signals with auto-filled levels are mis-targeted (LLM-supplied SELL
   levels are fine, and #3's resolver + EXPIRE learning label are now direction-aware).
   Retail can't short NEPSE, so a SELL is really "exit/avoid" guidance — but the geometry
-  should still be direction-correct. Needs its own small fix. **Tier 2 candidate.**
+  should still be direction-correct. Needs its own small fix. **→ FIXED in `9429d23`.**
+
+---
+
+## Update — 🟠 Tier 2 (usability) major items CLOSED (2026-08-06)
+
+- ✅ **Liquidity / turnover filter + SELL-direction geometry** (`9429d23`). Discovery
+  hard-filters thin scrips by scraped Rupee turnover (Rs 20 lakh default, admin-tunable),
+  annotates (never drops) a user's own watchlist symbol, fails open on unknown.
+  Live-validated: ~42% of NEPSE is below the threshold. `calcTargets` now
+  direction-correct for SELL + repairs inverted LLM levels.
+- ✅ **Per-user alert DELIVERY** (`6677f86`, migration applied). Watchlist-flip + outcome
+  emails via a per-(user,symbol) direction cursor (flip-detect + dedup); seeds silently on
+  first observation (no burst); one aggregated email/scan; disclaimer included. Email now
+  (OAuth address); Telegram per-user deferred (needs a chat_id linking flow).
+  **Owner activates with `RESEND_API_KEY`.**
+- ✅ **Server-side portfolio P&L** (`3d52156`, no migration). Real-qty net-of-charges P&L
+  (realized incl. CGT, unrealized pre-tax + "if sold today"), cost basis, sector
+  concentration (>40% flag), via `GET /api/portfolio/summary`; chat now uses server truth
+  instead of client-sent portfolio data. Prices shared-first, bounded on-demand fallback.
+
+**Remaining Tier-2 (minor):** user-defined custom price alerts (only signal-flip +
+target/stop alerts exist today). Everything else in Tier 2 is shipped.
