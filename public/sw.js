@@ -11,7 +11,7 @@
  *   - hashed static     -> cache-first (immutable: /_next/static, icons)
  *   - everything else   -> network, cache a copy opportunistically
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL_CACHE = `shell-${VERSION}`;
 const ASSET_CACHE = `assets-${VERSION}`;
 const SHELL_URLS = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
