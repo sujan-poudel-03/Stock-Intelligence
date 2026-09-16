@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { withGuard, edgeCache } from '@/lib/respond';
 import { wilsonLowerBound, riskAdjustedReturn } from '@/lib/stats';
-import { outcomeRealismColumnsReady } from '@/lib/schemaFlags';
+import { outcomeRealismColumnsReady, exchangeColumnReady } from '@/lib/schemaFlags';
+import { normalizeExchange } from '@/lib/exchanges';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +17,14 @@ export const dynamic = 'force-dynamic';
 // WIN/LOSS target/stop touch only. The net_return_pct/exit_reason columns are read only
 // when the migration is applied (schema-flag gate) — on an unmigrated DB this is
 // byte-for-byte the old gross-only, WIN/LOSS-only surface.
-export const GET = withGuard(async () => {
+//
+// Scoped to one exchange (?exchange=) — each market's track record is its own honesty
+// surface, never blended. Defaults to NEPSE, matching legacy pre-migration behaviour.
+export const GET = withGuard(async (request) => {
   const supabase = getSupabase();
+  const exchange = normalizeExchange(request.nextUrl.searchParams.get('exchange'));
   const realismReady = await outcomeRealismColumnsReady().catch(() => false);
+  const hasExchangeCol = await exchangeColumnReady();
 
   // EXPIRE rows only exist once the realism path is live; asking for them is harmless
   // on an unmigrated DB (the `outcome` filter simply matches none).
@@ -27,18 +33,22 @@ export const GET = withGuard(async () => {
     ? 'symbol, signal, sector, price, exit_price, outcome, return_pct, net_return_pct, exit_reason, created_at, outcome_at'
     : 'symbol, signal, sector, price, exit_price, outcome, return_pct, created_at, outcome_at';
 
-  const { data: resolved } = await supabase
+  let resolvedQuery = supabase
     .from('signals')
     .select(cols)
     .in('outcome', outcomes)
     .order('outcome_at', { ascending: false })
     .limit(500);
+  if (hasExchangeCol) resolvedQuery = resolvedQuery.eq('exchange', exchange);
+  const { data: resolved } = await resolvedQuery;
 
-  const { count: pending } = await supabase
+  let pendingQuery = supabase
     .from('signals')
     .select('id', { count: 'exact', head: true })
     .eq('outcome', 'PENDING')
     .in('signal', ['BUY', 'SELL']);
+  if (hasExchangeCol) pendingQuery = pendingQuery.eq('exchange', exchange);
+  const { count: pending } = await pendingQuery;
 
   const all = resolved || [];
   // Win-rate + averages are computed over the WIN/LOSS touch only (a time-stop EXPIRE is
@@ -95,6 +105,7 @@ export const GET = withGuard(async () => {
   // 60s across all visitors.
   return NextResponse.json(
     {
+      exchange,
       overall: summarize(rows),
       byDirection: {
         BUY: summarize(rows.filter((r) => r.signal === 'BUY')),

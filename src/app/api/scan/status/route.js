@@ -4,24 +4,34 @@ import { withGuard } from '@/lib/respond';
 import { STALL_MS } from '@/lib/constants';
 import { nextScanRunIso } from '@/lib/schedule';
 import { humanizeError } from '@/lib/humanizeError';
+import { normalizeExchange } from '@/lib/exchanges';
+import { exchangeColumnReady } from '@/lib/schemaFlags';
 
 export const dynamic = 'force-dynamic';
 
-// GET /api/scan/status -> current scan state for the UI poller.
-export const GET = withGuard(async () => {
+// GET /api/scan/status?exchange=NEPSE -> current scan state for the UI poller,
+// scoped to one exchange (a VIEW over shared per-exchange scans — switching markets
+// never triggers a scan). Defaults to NEPSE, matching legacy pre-migration behaviour.
+export const GET = withGuard(async (request) => {
   const supabase = getSupabase();
+  const exchange = normalizeExchange(request.nextUrl.searchParams.get('exchange'));
 
-  // Most recent scan.
-  const { data: scans } = await supabase
+  // Most recent scan for THIS exchange. The filter is applied only when the column
+  // exists; on an unmigrated DB this is the legacy "latest scan overall" query.
+  const hasExchangeCol = await exchangeColumnReady();
+  let scanQuery = supabase
     .from('scans')
     .select('*')
     .order('started_at', { ascending: false })
     .limit(1);
+  if (hasExchangeCol) scanQuery = scanQuery.eq('exchange', exchange);
+  const { data: scans } = await scanQuery;
 
   const scan = scans?.[0];
   if (!scan) {
     return NextResponse.json({
       running: false,
+      exchange,
       phase: null,
       current_symbol: null,
       completed: 0,
@@ -79,12 +89,14 @@ export const GET = withGuard(async () => {
   let marketAsOf = market ? scan.completed_at || scan.started_at : null;
   if (!market) {
     try {
-      const { data: recent } = await supabase
+      let recentQuery = supabase
         .from('scans')
         .select('market, completed_at, started_at')
         .not('market', 'is', null)
         .order('started_at', { ascending: false })
         .limit(5);
+      if (hasExchangeCol) recentQuery = recentQuery.eq('exchange', exchange);
+      const { data: recent } = await recentQuery;
       const withMkt = (recent || []).find((r) => hasMarketData(r.market));
       if (withMkt) {
         market = withMkt.market;
@@ -97,6 +109,7 @@ export const GET = withGuard(async () => {
 
   return NextResponse.json({
     running,
+    exchange,
     status: scan.status,
     phase: scan.phase,
     current_symbol: scan.current_symbol,
