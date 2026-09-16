@@ -141,14 +141,19 @@ export async function loadSystemWatchlist(exchange) {
 }
 
 // ---- portfolio (rows in portfolios column shape) ----------------------------
-export async function loadPortfolio(mode) {
+// Scoped to one exchange — a NEPSE position must never render alongside a NYSE one.
+export async function loadPortfolio(mode, exchange) {
   if (mode === 'api') {
-    const res = await api('/api/portfolio');
+    const res = await api('/api/portfolio?exchange=' + encodeURIComponent(exchange));
     if (!res.ok) return [];
     const d = await res.json();
     return d.positions || [];
   }
-  if (mode === 'local') return lsGet(LS_PF, []);
+  if (mode === 'local') {
+    // Legacy rows saved before the exchange concept existed have no `exchange` field —
+    // treat those as NEPSE, matching the server-side column default.
+    return lsGet(LS_PF, []).filter((r) => String(r.exchange || 'NEPSE').toUpperCase() === String(exchange).toUpperCase());
+  }
   return [];
 }
 

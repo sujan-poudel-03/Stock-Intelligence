@@ -354,6 +354,7 @@ export default function NepseApp() {
   // when signed in.
   function saveExchange(ex) {
     setExchange(ex);
+    setTrack(null); // force a re-fetch scoped to the new exchange (see loadTrack)
     store.deviceSet('ni:exchange', ex);
     if (currentMode() === 'api') store.savePersonalSettings('api', { exchange: ex });
   }
@@ -404,11 +405,11 @@ export default function NepseApp() {
 
   const loadTrack = useCallback(async () => {
     try {
-      const res = await fetch('/api/track-record', { cache: 'no-store' });
+      const res = await fetch('/api/track-record?exchange=' + encodeURIComponent(exchange), { cache: 'no-store' });
       const data = await res.json();
       if (data && data.overall) setTrack(data);
     } catch (err) { console.error('track-record load failed:', err); }
-  }, []);
+  }, [exchange]);
 
   // Reload the user's own positions (per-user table in 'api', localStorage in 'local',
   // empty when signed out). tradeLog is derived from the closed rows.
@@ -416,11 +417,11 @@ export default function NepseApp() {
     const mode = !auth.configured ? 'local' : (auth.signedIn ? 'api' : 'gated');
     if (mode === 'gated') { setPortfolio([]); setTradeLog([]); return; }
     try {
-      const rows = await store.loadPortfolio(mode);
+      const rows = await store.loadPortfolio(mode, exchange);
       setPortfolio(rows.map(posFromRow));
       setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
     } catch (err) { console.error('portfolio load failed:', err); }
-  }, [auth.configured, auth.signedIn]);
+  }, [auth.configured, auth.signedIn, exchange]);
 
   // -- status polling ---------------------------------------------------------
   const stopPolling = useCallback(() => {
@@ -429,7 +430,7 @@ export default function NepseApp() {
 
   const pollStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/scan/status', { cache: 'no-store' });
+      const res = await fetch('/api/scan/status?exchange=' + encodeURIComponent(exchange), { cache: 'no-store' });
       const data = await res.json();
       setStatus(data);
       if (data.market) setMarket(normalizeMarket(data.market));
@@ -462,7 +463,7 @@ export default function NepseApp() {
         await Promise.all([loadSignals(), loadActivity()]);
       }
     } catch (err) { console.error('status poll failed:', err); }
-  }, [loadActivity, loadSignals, stopPolling]);
+  }, [exchange, loadActivity, loadSignals, stopPolling]);
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
@@ -544,7 +545,10 @@ export default function NepseApp() {
   useEffect(() => {
     if (exFirstRef.current) { exFirstRef.current = false; return; }
     loadSignals();
-  }, [exchange, loadSignals]);
+    // Also re-scope the scan-status header (market chip / progress) to the newly
+    // selected exchange — otherwise it keeps showing whichever exchange last polled.
+    if (!pollRef.current) pollStatus();
+  }, [exchange, loadSignals, pollStatus]);
 
   // On sign-in (api mode), pull the user's saved exchange ONCE (identity read, no
   // scan). Kept separate from the exchange-change effect to avoid a save/reload race.
@@ -572,7 +576,7 @@ export default function NepseApp() {
         const wl = await store.loadWatchlist(mode, exchange);
         if (!alive) return;
         setWatchlist(wl.symbols); setWlSources(wl.sources);
-        const rows = await store.loadPortfolio(mode);
+        const rows = await store.loadPortfolio(mode, exchange);
         if (!alive) return;
         setPortfolio(rows.map(posFromRow));
         setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
@@ -711,7 +715,7 @@ export default function NepseApp() {
 
   function openStock(sym) {
     setOvSym(sym); setOvData(null); setOvAnalysis(''); setOvSig(null); setOvLoading(true);
-    fetch('/api/stock?symbol=' + encodeURIComponent(sym), { cache: 'no-store' })
+    fetch('/api/stock?symbol=' + encodeURIComponent(sym) + '&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (res.data) {
