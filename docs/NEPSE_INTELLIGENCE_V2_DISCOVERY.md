@@ -128,9 +128,10 @@ actually writes** (`src/lib/scan.js` `scanMarket()`):
 2. **App shell** (Phase 2) — the horizontal top-tab strip was replaced by a
    persistent left sidebar nav on desktop (logo/exchange indicator, TABS list with
    the same BUY-count/no-stop-loss badges the old tab bar had, Settings, an
-   admin-mode indicator). **Mobile explicitly keeps the old horizontal tab strip**
-   inside the top bar — no mobile drawer/sheet nav was built this pass; that stays
-   an open item (see §9).
+   admin-mode indicator). **Mobile** (Phase 12) gets its own fixed bottom nav bar
+   (safe-area-aware, same tab set + badges) instead of inheriting the desktop
+   pattern or the old horizontal strip — `app-content` reserves matching bottom
+   padding so the last card is never hidden behind it.
 3. **Today tab** (Phase 3) — rebuilt into a card-grid layout using the tokens plus
    the existing `card()/btn()/sbox()/SectionHeader/SegBtn` helpers, adding a small
    number of new presentational helpers genuinely needed (a market snapshot hero,
@@ -153,23 +154,41 @@ actually writes** (`src/lib/scan.js` `scanMarket()`):
    from real trading). It already meets this (amber theme, "SIMULATED" labeling
    throughout, a required confirm step nested inside the order ticket) — left
    unchanged rather than churned for no functional gain.
+7. **Settings / Admin** — the existing per-section card layout (Exchange, Account,
+   My Alerts, then admin config) already matched the redesign's structure; the one
+   real gap was visual separation of the admin zone, closed by wrapping
+   `AdminDataSources` + `AdminChannels` + the discovery/auto-remove/sector/scan-
+   profile cards in one dashed amber-bordered "ADMIN" zone with an explicit
+   "system configuration — affects every user" label. The server-side
+   `requireAdmin` enforcement (`src/lib/auth.js`) was already the real boundary —
+   this only fixes the client-visible framing.
+8. **Accessibility (light pass, not a full audit)** — `aria-current="page"` on the
+   active sidebar/bottom-nav tab, `aria-label`s on icon-only or symbol-only buttons
+   (Settings gear, watchlist/curated-list "x" remove buttons) that previously relied
+   on `title` alone. Semantic `<button>` elements and visible text labels were
+   already the norm throughout the app (not something this pass needed to fix).
 
 ## 8. Verification gates used every pass
 
 `npm run lint`, `npm run build`, `npm test` (Vitest, 337 tests) run after every
 edit in this pass. The local dev server was also restarted clean and confirmed
-`200 OK` after the full set of changes. **Not independently visually verified in
-a browser this pass** — the Claude-in-Chrome extension was not connected in this
-session, so no screenshot-based check was possible; a human visual pass is still
-owed before calling any of this "done."
+`200 OK` after the full set of changes, including after the final round (mobile
+nav + admin zone + accessibility pass). **Not independently visually verified in
+a browser** — the Claude-in-Chrome extension was not connected in this session,
+so no screenshot-based check was possible; a human visual pass is still owed
+before calling any of this pixel-correct, even though every change here is
+verified mechanically (lint/build/337 tests/clean server boot after every step).
 
 ## 9. Explicitly open items (deferred, not dropped)
 
-- **Mobile sidebar/drawer nav** — mobile currently falls back to the pre-redesign
-  horizontal tab strip rather than getting its own treatment of the sidebar concept.
-- **Settings / Admin panels** — not touched.
-- **A component-map doc, accessibility audit, and mobile-specific layout QA** —
-  deferred until more than one screen's redesign has settled, so those docs
-  describe real reuse rather than a hypothetical one.
-- **Human visual QA** — see §8. Everything above is verified mechanically
-  (lint/build/test/server-boots) but not yet eyeballed in a real browser.
+- **Human visual QA** — see §8. This is the single biggest open risk: nothing in
+  this engagement was seen rendered in an actual browser.
+- **A dedicated component-map doc** — deferred until the remaining screens
+  (mostly Settings/Admin sub-panels: `AdminDataSources.jsx`, `AdminChannels.jsx`,
+  `AuthPanel.jsx`) also move onto the token system, so the doc reflects real reuse.
+- **Full WCAG-level accessibility audit** (contrast ratios, full keyboard-nav
+  trapping in modals/overlays, screen-reader pass) — only a light, targeted pass
+  was done (see item 8 above), not a full audit.
+- **NYSE-specific UI treatment** — the redesign didn't touch exchange-specific
+  formatting (currency symbol, disclaimer copy); that's still exactly as it was
+  before this engagement, tracked separately in `docs/NYSE-MULTI-EXCHANGE.md`.

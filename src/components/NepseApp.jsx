@@ -1095,7 +1095,7 @@ export default function NepseApp() {
               {TABS.map(function (t) {
                 var active = tab === t.k;
                 return (
-                  <button key={t.k} onClick={function () { setTab(t.k); }} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', borderRadius: dsRadius.md, border: 'none', background: active ? dsColor.info + '18' : 'transparent', color: active ? dsColor.info : dsColor.textFaint, fontSize: dsText.base, fontWeight: active ? 600 : 400, fontFamily: dsFont.ui, cursor: 'pointer', textAlign: 'left' }}>
+                  <button key={t.k} onClick={function () { setTab(t.k); }} aria-current={active ? 'page' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', borderRadius: dsRadius.md, border: 'none', background: active ? dsColor.info + '18' : 'transparent', color: active ? dsColor.info : dsColor.textFaint, fontSize: dsText.base, fontWeight: active ? 600 : 400, fontFamily: dsFont.ui, cursor: 'pointer', textAlign: 'left' }}>
                     <span style={{ flex: 1 }}>{t.label}</span>
                     {t.k === 'signals' && buySigCount > 0 && <span style={{ fontSize: dsText.caption, padding: '1px 5px', borderRadius: 10, background: dsColor.positive + '22', color: dsColor.positive, fontFamily: dsFont.mono }}>{buySigCount}</span>}
                     {t.k === 'positions' && noSLCount > 0 && <span style={{ fontSize: dsText.caption, padding: '1px 5px', borderRadius: 10, background: dsColor.negative + '22', color: dsColor.negative, fontFamily: dsFont.mono }}>!</span>}
@@ -1161,28 +1161,15 @@ export default function NepseApp() {
             )}
           </div>
         </div>
-        {/* nav bar — the horizontal tab strip is now MOBILE-ONLY (desktop navigation
-            moved to the left sidebar above). Settings likewise: a sidebar item on
-            desktop, a gear icon here on mobile where there is no sidebar. */}
+        {/* nav bar — primary navigation lives in the left sidebar (desktop) or the
+            fixed bottom nav (mobile, rendered near the end of this component); this
+            row is just Settings + Ask on mobile, a spacer + Ask on desktop. */}
         <div className="app-nav" style={{ display: 'flex', alignItems: 'center' }}>
-          {isMobile ? (
-            <div className="nav-tabs" style={{ display: 'flex', flex: 1, gap: 0, overflowX: 'auto' }}>
-              {TABS.map(function (t) {
-                var active = tab === t.k;
-                return (
-                  <button key={t.k} onClick={function () { setTab(t.k); }} style={{ padding: '0 14px', height: 38, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, fontWeight: active ? 500 : 400, fontFamily: 'Inter,sans-serif', color: active ? '#e2e8f0' : '#4a5568', borderBottom: active ? '2px solid #3b82f6' : '2px solid transparent', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5 }}>
-                    {t.label}
-                    {t.k === 'signals' && buySigCount > 0 && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 10, background: '#10b98122', color: '#10b981', fontFamily: 'IBM Plex Mono,monospace' }}>{buySigCount}</span>}
-                    {t.k === 'positions' && noSLCount > 0 && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 10, background: '#ef444422', color: '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>!</span>}
-                  </button>
-                );
-              })}
-            </div>
-          ) : <div style={{ flex: 1 }} />}
+          <div style={{ flex: 1 }} />
           {isMobile && (
             <>
               <div style={{ width: 1, height: 20, background: '#1e2840', margin: '0 6px' }} />
-              <button onClick={function () { setTab('settings'); }} title="Settings" style={{ padding: '0 10px', height: 38, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: tab === 'settings' ? '2px solid #3b82f6' : '2px solid transparent' }}>
+              <button onClick={function () { setTab('settings'); }} title="Settings" aria-label="Settings" style={{ padding: '0 10px', height: 38, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: tab === 'settings' ? '2px solid #3b82f6' : '2px solid transparent' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={tab === 'settings' ? '#e2e8f0' : '#4a5568'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="3" />
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
@@ -1278,8 +1265,9 @@ export default function NepseApp() {
       {/* MAIN LAYOUT */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-        {/* main content */}
-        <div className="app-content" style={{ flex: 1, overflowY: 'auto' }}>
+        {/* main content — extra bottom padding on mobile so the fixed bottom nav
+            (below) never covers the last card. */}
+        <div className="app-content" style={{ flex: 1, overflowY: 'auto', paddingBottom: isMobile ? 'calc(56px + env(safe-area-inset-bottom, 0px))' : 0 }}>
 
           {/* TODAY */}
           {tab === 'today' && (
@@ -1739,7 +1727,7 @@ export default function NepseApp() {
                           <div key={'sys-' + sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
                               <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
-                              {auth.isAdmin && <button onClick={function () { curateSystemWatch('deactivate', sym); }} title="deactivate (admin)" style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>}
+                              {auth.isAdmin && <button onClick={function () { curateSystemWatch('deactivate', sym); }} title="deactivate (admin)" aria-label={'Remove ' + sym + ' from curated watchlist'} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
                               <span style={{ fontSize: 8, color: srcC }}>{row.source}</span>
@@ -1780,7 +1768,7 @@ export default function NepseApp() {
                       <div key={sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
-                          <button onClick={function () { removeFromWatchlist(sym); }} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>
+                          <button onClick={function () { removeFromWatchlist(sym); }} aria-label={'Remove ' + sym + ' from your watchlist'} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
                           <span style={{ fontSize: 8, color: srcC }}>{src}</span>
@@ -1887,23 +1875,21 @@ export default function NepseApp() {
                 </div>
               )}
 
-              {/* Admin-only config surfaces — hidden for non-admins; the server
-                  still enforces the boundary on the actual mutations. */}
+              {/* ADMIN ZONE — hidden for non-admins; the server independently enforces
+                  the boundary on every mutation below (this visual gate is a UX nicety,
+                  not the security boundary). Visually distinct (amber banner) from the
+                  user-facing sections above, per the redesign's admin-separation rule. */}
               {auth.isAdmin && (
-                <>
+                <div style={{ border: '1px dashed ' + dsColor.warning + '55', borderRadius: dsRadius.lg, padding: '14px 16px 4px', marginBottom: dsSpacing.md, background: dsColor.warning + '06' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: dsSpacing.md }}>
+                    <span style={{ fontSize: dsText.caption, fontWeight: 700, letterSpacing: '.08em', color: dsColor.warning, fontFamily: dsFont.mono }}>ADMIN</span>
+                    <span style={{ fontSize: dsText.small, color: dsColor.textFaint, fontFamily: dsFont.ui }}>system configuration — affects every user</span>
+                  </div>
                   {/* Data Sources */}
                   <AdminDataSources />
 
                   {/* Notifications */}
                   <AdminChannels />
-                </>
-              )}
-
-              {/* Agent/discovery config — shapes the ONE global scan, so ADMIN-only
-                  (hidden for regular users; server-enforced on /api/admin/settings).
-                  A regular user's Settings = Exchange + Account above. */}
-              {auth.isAdmin && (
-              <>
               {/* Discovery */}
               <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
@@ -1995,7 +1981,7 @@ export default function NepseApp() {
                   Scans now run server-side (cron + manual). The agent fetches the market, discovers movers, scans each stock, then writes a brief — crash-safe and within the daily AI budget.
                 </div>
               </div>
-              </>
+                </div>
               )}
             </div>
           )}
@@ -2061,6 +2047,24 @@ export default function NepseApp() {
 
       </div>{/* end right column */}
       </div>{/* end app body (sidebar + right column) */}
+
+      {/* MOBILE BOTTOM NAV — the sidebar's mobile equivalent (Phase 12). Fixed,
+          safe-area-aware; app-content already reserves matching bottom padding
+          above so the last card is never hidden behind it. */}
+      {isMobile && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 250, display: 'flex', background: dsColor.surfaceRaised, borderTop: '1px solid ' + dsColor.borderSubtle, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+          {TABS.map(function (t) {
+            var active = tab === t.k;
+            return (
+              <button key={t.k} onClick={function () { setTab(t.k); }} aria-current={active ? 'page' : undefined} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '8px 1px', minHeight: 48, border: 'none', background: 'none', cursor: 'pointer', color: active ? dsColor.info : dsColor.textFaint, position: 'relative' }}>
+                <span style={{ fontSize: 8, fontWeight: active ? 600 : 400, fontFamily: dsFont.ui, textAlign: 'center', lineHeight: 1.15 }}>{t.label}</span>
+                {t.k === 'signals' && buySigCount > 0 && <span style={{ position: 'absolute', top: 2, right: '18%', width: 6, height: 6, borderRadius: '50%', background: dsColor.positive }} />}
+                {t.k === 'positions' && noSLCount > 0 && <span style={{ position: 'absolute', top: 2, right: '18%', width: 6, height: 6, borderRadius: '50%', background: dsColor.negative }} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* STOCK OVERLAY */}
       {ovSym && (
