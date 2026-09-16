@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { getAccessToken } from '@/lib/authClient';
+import { color, text } from '@/design-system/tokens';
+import SectionCard from '@/design-system/components/SectionCard';
+import Pill from '@/design-system/components/Pill';
 
 // Settings → Data Sources (admin). Pick which market-data provider(s) feed the
 // verified-price layer. A source that isn't available — not implemented (stub) or
@@ -67,10 +70,10 @@ export default function AdminDataSources() {
   });
 
   function badge(p) {
-    if (!p.available) return { label: 'DISABLED', color: '#4a5568' };
-    if (p.status === 'live') return { label: 'LIVE', color: '#10b981' };
-    if (p.status === 'sample') return { label: 'SAMPLE', color: '#f59e0b' };
-    return { label: p.status.toUpperCase(), color: '#4a5568' };
+    if (!p.available) return { label: 'DISABLED', color: color.textFaint };
+    if (p.status === 'live') return { label: 'LIVE', color: color.positive };
+    if (p.status === 'sample') return { label: 'SAMPLE', color: color.warning };
+    return { label: p.status.toUpperCase(), color: color.textFaint };
   }
 
   function disabledReason(p) {
@@ -81,17 +84,9 @@ export default function AdminDataSources() {
   }
 
   return (
-    <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 8, background: '#8b5cf618', border: '1px solid #8b5cf633', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#8b5cf6', fontFamily: 'IBM Plex Mono,monospace', fontWeight: 600 }}>db</div>
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Market Data Sources</div>
-          <div style={{ fontSize: 10, color: '#4a5568' }}>Where verified prices come from. Admin-only. Multiple sources are cross-checked.</div>
-        </div>
-      </div>
-
+    <SectionCard icon="db" iconColor="#8b5cf6" title="Market Data Sources" subtitle="Where verified prices come from. Admin-only. Multiple sources are cross-checked.">
       {loading ? (
-        <div style={{ fontSize: 11, color: '#4a5568', padding: '8px 0' }}>Loading sources…</div>
+        <div style={{ fontSize: text.body, color: color.textFaint, padding: '8px 0' }}>Loading sources…</div>
       ) : (
         <>
           {providers.map((p) => {
@@ -112,7 +107,7 @@ export default function AdminDataSources() {
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 12, fontWeight: on ? 600 : 400, color: on ? '#e2e8f0' : '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{p.label}</span>
-                    <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '.04em', color: b.color, background: b.color + '20', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{b.label}</span>
+                    <Pill tone={b.color}>{b.label}</Pill>
                   </div>
                   <div style={{ fontSize: 10, color: '#4a5568', marginTop: 3 }}>{p.description}</div>
                   {reason && <div style={{ fontSize: 9, color: '#f59e0b', marginTop: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{reason}</div>}
@@ -140,6 +135,6 @@ export default function AdminDataSources() {
           </div>
         </>
       )}
-    </div>
+    </SectionCard>
   );
 }

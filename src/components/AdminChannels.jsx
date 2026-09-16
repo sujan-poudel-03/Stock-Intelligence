@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { color, text, font } from '@/design-system/tokens';
+import SectionCard from '@/design-system/components/SectionCard';
+import Pill from '@/design-system/components/Pill';
 
 // Settings → Notifications (admin). Read-only status of delivery channels. A channel
 // is ACTIVE automatically when its required env is present (no UI toggle) — this just
@@ -24,33 +27,25 @@ export default function AdminChannels() {
   }, []);
 
   return (
-    <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 8, background: '#10b98118', border: '1px solid #10b98133', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#10b981', fontFamily: 'IBM Plex Mono,monospace', fontWeight: 600 }}>@</div>
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Notifications</div>
-          <div style={{ fontSize: 10, color: '#4a5568' }}>Daily brief + failed/partial-scan alerts. Active automatically when the env is set.</div>
-        </div>
-      </div>
-
+    <SectionCard icon="@" iconColor={color.positive} title="Notifications" subtitle="Daily brief + failed/partial-scan alerts. Active automatically when the env is set.">
       {loading ? (
-        <div style={{ fontSize: 11, color: '#4a5568', padding: '8px 0' }}>Loading…</div>
+        <div style={{ fontSize: text.body, color: color.textFaint, padding: '8px 0' }}>Loading…</div>
       ) : (
         channels.map((c) => (
-          <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid #0f1420' }}>
-            <div style={{ width: 7, height: 7, borderRadius: '50%', marginTop: 5, background: c.configured ? '#10b981' : '#2a3550', flexShrink: 0 }} />
+          <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid ' + color.borderSubtle }}>
+            <div style={{ width: 7, height: 7, borderRadius: '50%', marginTop: 5, background: c.configured ? color.positive : color.textGhost, flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 500, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>{c.label}</span>
-                <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '.04em', color: c.configured ? '#10b981' : '#4a5568', background: (c.configured ? '#10b981' : '#4a5568') + '20', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{c.configured ? 'ACTIVE' : 'OFF'}</span>
+                <span style={{ fontSize: text.base, fontWeight: 500, color: color.textPrimary, fontFamily: font.ui }}>{c.label}</span>
+                <Pill tone={c.configured ? color.positive : color.textFaint}>{c.configured ? 'ACTIVE' : 'OFF'}</Pill>
               </div>
               {!c.configured && (
-                <div style={{ fontSize: 9, color: '#f59e0b', marginTop: 3, fontFamily: 'IBM Plex Mono,monospace' }}>Set {c.requiresEnv.join(' + ')} to enable</div>
+                <div style={{ fontSize: text.caption, color: color.warning, marginTop: 3, fontFamily: font.mono }}>Set {c.requiresEnv.join(' + ')} to enable</div>
               )}
             </div>
           </div>
         ))
       )}
-    </div>
+    </SectionCard>
   );
 }

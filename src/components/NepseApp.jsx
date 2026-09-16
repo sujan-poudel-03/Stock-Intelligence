@@ -16,6 +16,9 @@ import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 import { maskEmail, asOfLabel, channelNeedsSetup } from '@/lib/format';
 import { previewOrder, isWholeQty } from '@/lib/paperTrade';
 import { color as dsColor, spacing as dsSpacing, radius as dsRadius, font as dsFont, text as dsText } from '@/design-system/tokens';
+import StatusPill from '@/design-system/components/StatusPill';
+import Pill from '@/design-system/components/Pill';
+import SectionCard from '@/design-system/components/SectionCard';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -218,18 +221,6 @@ function fmtRet(pct) { const n = Number(pct); return (n >= 0 ? '+' : '') + (Math
 // NepseApp — no new fetches, no invented numbers (see the discovery doc §4).
 // -----------------------------------------------------------------------------
 
-// A small label+color pill for status/sentiment/freshness — color is always paired
-// with a text label, never the only signal (accessibility + colorblind-safe).
-function StatusPill(props) {
-  var c = props.color || dsColor.muted;
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: dsText.caption, fontWeight: 600, padding: '3px 9px', borderRadius: dsRadius.pill, background: c + '1c', color: c, fontFamily: dsFont.ui, whiteSpace: 'nowrap' }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: c, flexShrink: 0 }} />
-      {props.children}
-    </span>
-  );
-}
-
 // Data-freshness indicator for a market/price timestamp. > 30 min old reads as
 // stale (matches the "correctness is the gate, freshness is metadata" guardrail —
 // this never hides or blocks stale data, only labels it honestly).
@@ -238,7 +229,7 @@ function FreshnessPill(props) {
   var ageMin = Math.floor((Date.now() - new Date(props.asOf).getTime()) / 60000);
   var stale = ageMin > 30;
   return (
-    <StatusPill color={stale ? dsColor.warning : dsColor.positive}>
+    <StatusPill tone={stale ? dsColor.warning : dsColor.positive}>
       {(stale ? 'STALE' : 'VERIFIED') + ' · updated ' + timeAgo(props.asOf) + ' ago'}
     </StatusPill>
   );
@@ -264,7 +255,7 @@ function MarketHero(props) {
         )}
       </div>
       {m && m.sentiment && (
-        <StatusPill color={dsColor.sentiment[m.sentiment] || dsColor.muted}><Term k={m.sentiment}>{m.sentiment}</Term></StatusPill>
+        <StatusPill tone={dsColor.sentiment[m.sentiment] || dsColor.muted}><Term k={m.sentiment}>{m.sentiment}</Term></StatusPill>
       )}
       {m && m.turnover != null && (
         <div>{sbox('turnover', 'Rs ' + Number(m.turnover).toLocaleString('en-IN'), dsColor.textSecondary)}</div>
@@ -1795,14 +1786,7 @@ export default function NepseApp() {
               <SectionHeader title="Agent Settings" sub="configure how the agent scans and discovers" />
 
               {/* Exchange */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#3b82f618', border: '1px solid #3b82f633', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#3b82f6', fontFamily: 'IBM Plex Mono,monospace', fontWeight: 600 }}>ex</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Stock Exchange</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Which market are you trading</div>
-                  </div>
-                </div>
+              <SectionCard icon="ex" iconColor={dsColor.info} title="Stock Exchange" subtitle="Which market are you trading">
                 <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {Object.keys(EXCHANGES).map(function (exId) {
                     var ex = EXCHANGES[exId]; var active = exchange === exId;
@@ -1825,7 +1809,7 @@ export default function NepseApp() {
                     );
                   })}
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Account / admin sign-in (only when Google auth is configured) */}
               <AuthPanel auth={auth} />
@@ -1837,14 +1821,7 @@ export default function NepseApp() {
               {gated ? (
                 <SignInPrompt title="Sign in to set alert preferences" sub="Choose how the agent notifies you and which signals trigger an alert. Your preferences are private to your account." onSignIn={auth.signIn} />
               ) : (
-                <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f59e0b18', border: '1px solid #f59e0b33', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: '#f59e0b' }}>!</div>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>My Alerts</div>
-                      <div style={{ fontSize: 10, color: '#4a5568' }}>How the agent notifies you when a signal fires</div>
-                    </div>
-                  </div>
+                <SectionCard icon="!" iconColor={dsColor.warning} title="My Alerts" subtitle="How the agent notifies you when a signal fires">
                   {[['email', 'Email'], ['telegram', 'Telegram']].map(function (c) {
                     var chInfo = channelMap[c[0]];
                     var needsSetup = chInfo && channelNeedsSetup(!!alertPrefs.channels[c[0]], chInfo.configured);
@@ -1872,7 +1849,7 @@ export default function NepseApp() {
                       </div>
                     );
                   })}
-                </div>
+                </SectionCard>
               )}
 
               {/* ADMIN ZONE — hidden for non-admins; the server independently enforces
@@ -1891,17 +1868,8 @@ export default function NepseApp() {
                   {/* Notifications */}
                   <AdminChannels />
               {/* Discovery */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#10b98118', border: '1px solid #10b98133', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>@</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Auto-Discovery</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Scans NEPSE market movers, finds best signals</div>
-                  </div>
-                  <div style={{ marginLeft: 'auto' }}>
-                    <ToggleBtn on={settings.discovery_on} onClick={function () { saveSettings(Object.assign({}, settings, { discovery_on: !settings.discovery_on })); }} />
-                  </div>
-                </div>
+              <SectionCard icon="@" iconColor={dsColor.positive} title="Auto-Discovery" subtitle="Scans NEPSE market movers, finds best signals"
+                right={<div style={{ marginLeft: 'auto' }}><ToggleBtn on={settings.discovery_on} onClick={function () { saveSettings(Object.assign({}, settings, { discovery_on: !settings.discovery_on })); }} /></div>}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Discovery depth</div>
@@ -1916,20 +1884,11 @@ export default function NepseApp() {
                   </div>
                   <SegBtn value={settings.autoadd_threshold} options={[['BUY', 'BUY only'], ['BUY_WATCH', 'BUY + WATCH']]} onChange={function (v) { saveSettings(Object.assign({}, settings, { autoadd_threshold: v })); }} />
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Auto-remove */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#ef444418', border: '1px solid #ef444433', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>-</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Auto-Remove</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Removes stale stocks from watchlist automatically (inactive in this version)</div>
-                  </div>
-                  <div style={{ marginLeft: 'auto' }}>
-                    <ToggleBtn on={settings.autoremove_on} onClick={function () { saveSettings(Object.assign({}, settings, { autoremove_on: !settings.autoremove_on })); }} />
-                  </div>
-                </div>
+              <SectionCard icon="-" iconColor={dsColor.negative} title="Auto-Remove" subtitle="Removes stale stocks from watchlist automatically (inactive in this version)"
+                right={<div style={{ marginLeft: 'auto' }}><ToggleBtn on={settings.autoremove_on} onClick={function () { saveSettings(Object.assign({}, settings, { autoremove_on: !settings.autoremove_on })); }} /></div>}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Remove after N stale scans</div>
@@ -1937,17 +1896,10 @@ export default function NepseApp() {
                   </div>
                   <SegBtn value={settings.autoremove_after} options={[2, 3, 5]} onChange={function (n) { saveSettings(Object.assign({}, settings, { autoremove_after: n })); }} />
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Sector focus */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#a78bfa18', border: '1px solid #a78bfa33', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>#</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Sector Focus</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Discovery prioritises enabled sectors. All on = no bias.</div>
-                  </div>
-                </div>
+              <SectionCard icon="#" iconColor={dsColor.discovery} title="Sector Focus" subtitle="Discovery prioritises enabled sectors. All on = no bias.">
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(148px,1fr))', gap: 8, marginTop: 12 }}>
                   {SECTORS.map(function (s) {
                     var on = settings.sector_focus[s];
@@ -1962,7 +1914,7 @@ export default function NepseApp() {
                     );
                   })}
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Scan profile summary */}
               <div style={{ background: 'linear-gradient(135deg,#0b0e16 0%,#0d1220 100%)', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px' }}>

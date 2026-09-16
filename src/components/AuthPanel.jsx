@@ -1,6 +1,8 @@
 'use client';
 
 import { maskEmail } from '@/lib/format';
+import { color, radius, spacing, font, text } from '@/design-system/tokens';
+import Pill from '@/design-system/components/Pill';
 
 // Account panel (Settings). Shows Google sign-in / the signed-in identity + role.
 // Rendered only when auth is configured; in open mode there's no auth infra so it
@@ -8,29 +10,30 @@ import { maskEmail } from '@/lib/format';
 export default function AuthPanel({ auth }) {
   if (!auth || !auth.configured) return null;
 
-  const card = { background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '14px 16px', marginBottom: 12 };
+  const card = { background: color.surface, border: '1px solid ' + color.border, borderRadius: radius.lg, padding: '14px 16px', marginBottom: spacing.md };
 
   if (auth.email) {
+    const roleColor = auth.isAdmin ? color.positive : color.textFaint;
     return (
       <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#3b82f618', border: '1px solid #3b82f633', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#3b82f6', fontFamily: 'IBM Plex Mono,monospace' }}>
+        <div style={{ width: 28, height: 28, borderRadius: '50%', background: color.info + '18', border: '1px solid ' + color.info + '33', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: text.base, color: color.info, fontFamily: font.mono }}>
           {auth.email[0].toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div title={maskEmail(auth.email)} style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{maskEmail(auth.email)}</div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '.04em', color: auth.isAdmin ? '#10b981' : '#4a5568', background: (auth.isAdmin ? '#10b981' : '#4a5568') + '20', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{auth.isAdmin ? 'ADMIN' : 'USER'}</span>
+          <div title={maskEmail(auth.email)} style={{ fontSize: text.body, color: color.textPrimary, fontFamily: font.ui, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{maskEmail(auth.email)}</div>
+          <Pill tone={roleColor}>{auth.isAdmin ? 'ADMIN' : 'USER'}</Pill>
         </div>
-        <button onClick={auth.signOut} style={{ fontSize: 10, color: '#4a5568', background: 'none', border: '1px solid #1e2840', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Sign out</button>
+        <button onClick={auth.signOut} style={{ fontSize: text.small, color: color.textFaint, background: 'none', border: '1px solid ' + color.border, borderRadius: radius.md, padding: '5px 10px', cursor: 'pointer', fontFamily: font.ui }}>Sign out</button>
       </div>
     );
   }
 
   return (
     <div style={{ ...card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-      <div style={{ fontSize: 10, color: '#4a5568', fontFamily: 'Inter,sans-serif' }}>
+      <div style={{ fontSize: text.small, color: color.textFaint, fontFamily: font.ui }}>
         {auth.gateEnabled ? 'Admin features require sign-in.' : 'Sign in to identify yourself.'}
       </div>
-      <button onClick={auth.signIn} style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0', background: '#3b82f615', border: '1px solid #3b82f6', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Sign in with Google</button>
+      <button onClick={auth.signIn} style={{ fontSize: text.base, fontWeight: 600, color: color.textPrimary, background: color.info + '15', border: '1px solid ' + color.info, borderRadius: radius.lg, padding: '7px 14px', cursor: 'pointer', fontFamily: font.ui }}>Sign in with Google</button>
     </div>
   );
 }

@@ -5,13 +5,20 @@ Read `docs/NEPSE_INTELLIGENCE_V2_DISCOVERY.md` first — it has the real archite
 the route map, the per-tab breakdown, and the real-data-vs-fabricated-data table;
 this doc doesn't repeat that, it records what actually got built and what didn't.
 
-**Route map and component map are intentionally not separate files.** The app has
-one real route (`GET /` → `NepseApp.jsx`) and, until more screens share the new
-token system, only a handful of new reusable pieces — both are already fully
-covered in the discovery doc (§2 route map, §5 preserved logic) and in the source
-comments next to each new component. Splitting them into their own docs now would
-be three thin files describing the same handful of facts (CLAUDE.md: no
-abstractions/artifacts beyond what's needed).
+**Route map is intentionally not a separate file** — the app has one real route
+(`GET /` → `NepseApp.jsx`), already covered in the discovery doc §2.
+
+**Component map** (small enough to inline here rather than a fourth doc):
+
+| Component | File | Used by |
+|---|---|---|
+| `SectionCard` | `src/design-system/components/SectionCard.jsx` | Settings (Exchange/My Alerts/Discovery/Auto-Remove/Sector Focus), `AdminDataSources.jsx`, `AdminChannels.jsx` |
+| `Pill` | `src/design-system/components/Pill.jsx` | `AuthPanel.jsx` (ADMIN/USER), `AdminDataSources.jsx` (LIVE/SAMPLE/DISABLED), `AdminChannels.jsx` (ACTIVE/OFF) |
+| `StatusPill` | `src/design-system/components/StatusPill.jsx` | `NepseApp.jsx` Today hero (market sentiment, price freshness) |
+| `card()/btn()/sbox()/SectionHeader/ToggleBtn/SegBtn` | local functions in `NepseApp.jsx` | every tab in `NepseApp.jsx` — kept local since nothing outside that file needs them yet (CLAUDE.md: promote to `src/design-system/` only when a second file needs it) |
+
+This table was added *after* a real duplication was found and fixed (see §8) —
+it documents actual reuse, not a planned one.
 
 ## 1. What was built, by phase
 
@@ -72,14 +79,34 @@ passing), and a clean `next dev` boot returning `200` after every change — not
 a human or automated visual check. **Look at `http://localhost:3001` before
 treating this as finished.**
 
-## 7. Suggested next steps, in priority order
+## 7. Deduplication pass (component extraction)
+
+A real duplication was found: the "icon-badge + title + subtitle" card header was
+hand-written nearly verbatim in 7 places (Settings' Exchange/My Alerts/Discovery/
+Auto-Remove/Sector-Focus blocks, plus the standalone `AdminDataSources.jsx` and
+`AdminChannels.jsx`), and the small colored status/role badge was independently
+reimplemented 4 times (`AuthPanel.jsx`'s ADMIN/USER, `AdminDataSources.jsx`'s
+LIVE/SAMPLE/DISABLED, `AdminChannels.jsx`'s ACTIVE/OFF, `NepseApp.jsx`'s market
+sentiment/freshness pill). Extracted into `src/design-system/components/`:
+`SectionCard`, `Pill`, `StatusPill` (see the component table above) — all three
+existing consumer files (`AuthPanel.jsx`, `AdminDataSources.jsx`,
+`AdminChannels.jsx`) and the relevant `NepseApp.jsx` sections now import and reuse
+them instead of duplicating the markup. A CLAUDE.md standing rule now requires
+checking `src/design-system/` before hand-writing a new instance of a
+repeated pattern.
+
+Not touched: `NepseApp.jsx`'s own local `card()/btn()/sbox()` helpers were left
+where they are — they're already the single shared implementation for every tab
+*within* that file (no duplication to fix), and promoting them into
+`src/design-system/` before a second file needs them would be exactly the
+speculative abstraction CLAUDE.md warns against.
+
+## 8. Suggested next steps, in priority order
 
 1. **Visual QA in a real browser** — the one thing this engagement could not do.
-2. Settings/Admin sub-panel visual pass (`AdminDataSources.jsx`, `AdminChannels.jsx`,
-   `AuthPanel.jsx` still use their own pre-redesign inline styles).
-3. A real mobile device/emulator pass on the new bottom nav (6 tabs at 8px font on
+2. A real mobile device/emulator pass on the new bottom nav (6 tabs at 8px font on
    a 375px screen is tight — verify it doesn't clip on the smallest supported width).
-4. Decide whether "Ask" deserves a more prominent, search-bar-styled entry point
+3. Decide whether "Ask" deserves a more prominent, search-bar-styled entry point
    (the master brief's mockup shows it as a top-bar search field) vs. the current
    toggle button — this was deliberately left as a toggle to avoid implying it's a
    stock-symbol search when it's actually a chat trigger with prefillable context.

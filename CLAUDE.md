@@ -16,6 +16,22 @@ make an admin, Google Sign-In setup, and the owner-action checklist.
   action's UI (nested, conditionally rendered, or disabled-with-explanation) —
   never an independent, equally-weighted control reachable out of order.
 
+- **UI component reuse — no re-inlining a pattern that already has a home.**
+  Shared visual pieces live in `src/design-system/` (`tokens.js` for
+  colors/spacing/radii/type/fonts; `components/` for JSX — `SectionCard`
+  (icon-badge + title + subtitle + body, used by every Settings/Admin card),
+  `Pill` (compact status/role/outcome badge — ADMIN/USER, LIVE/SAMPLE/DISABLED,
+  ACTIVE/OFF), `StatusPill` (rounded dot-led hero-level status), plus
+  `NepseApp.jsx`'s own local helpers (`card()/btn()/sbox()/SectionHeader/
+  ToggleBtn/SegBtn`) for everything specific to that shell. Before hand-writing a
+  new inline-styled block — an icon+title+subtitle card header, a colored
+  label/badge, a stat box, a button — check whether an existing design-system
+  component or `NepseApp.jsx` helper already covers the shape; use or extend it
+  instead of duplicating the markup. A pattern used in two or more places belongs
+  in `src/design-system/`, not copy-pasted. Only add a new token/component when a
+  real call site needs it — no speculative "complete" component library
+  (consistent with the no-abstractions-beyond-what's-needed rule below).
+
 - **All model calls go through `callLLM`** (`src/lib/llm.js`). Never import a
   provider SDK (`@anthropic-ai/sdk`, `@google/genai`) into feature code. Parse
   model output with `parseJson()` (returns `null` on junk).
