@@ -456,6 +456,8 @@ export default function NepseApp() {
   const [sysWlInput, setSysWlInput] = useState(''); // admin: add-to-curated-list input
   const [sigFilter, setSigFilter] = useState('ALL'); // Signals workspace: BUY/SELL/HOLD/AVOID chip filter
   const [sigSearch, setSigSearch] = useState(''); // Signals workspace: symbol search
+  const [sigSector, setSigSector] = useState('ALL'); // screener: sector filter (Phase F)
+  const [sigConfidence, setSigConfidence] = useState('ALL'); // screener: confidence filter (Phase F)
   const [toasts, setToasts] = useState([]);
   const [logs, setLogs] = useState([]); // ephemeral local notices
   const [showLog, setShowLog] = useState(false);
@@ -477,8 +479,13 @@ export default function NepseApp() {
   var filteredSignals = signals.filter(function (s) {
     if (sigFilter !== 'ALL' && s.signal !== sigFilter) return false;
     if (sigSearch && s.symbol.toUpperCase().indexOf(sigSearch.toUpperCase()) === -1) return false;
+    if (sigSector !== 'ALL' && (s.sector || 'Unknown') !== sigSector) return false;
+    if (sigConfidence !== 'ALL' && s.confidence !== sigConfidence) return false;
     return true;
   });
+  // Screener sector options: only sectors actually present in today's scanned
+  // signals — never a hardcoded/fabricated list.
+  var sigSectorOptions = Array.from(new Set(signals.map(function (s) { return s.sector || 'Unknown'; }))).sort();
   var alerts = openPos.reduce(function (arr, p) {
     var live = stockCache[p.symbol];
     var sigLive = signals.find(function (s) { return s.symbol === p.symbol && s.live; });
@@ -1536,6 +1543,20 @@ export default function NepseApp() {
                   })}
                 </div>
                 <input value={sigSearch} onChange={function (e) { setSigSearch(e.target.value); }} placeholder="Search symbol…" style={{ flex: '1 1 140px', minWidth: 120, fontSize: dsText.small, padding: '6px 10px', borderRadius: dsRadius.md, border: '1px solid ' + dsColor.border, background: dsColor.surface, color: dsColor.textPrimary, fontFamily: dsFont.mono }} />
+                {/* screener filters (Phase F) — sector + confidence, over the same already-loaded signals */}
+                <select value={sigSector} onChange={function (e) { setSigSector(e.target.value); }} style={{ fontSize: dsText.small, padding: '6px 8px', borderRadius: dsRadius.md, border: '1px solid ' + dsColor.border, background: dsColor.surface, color: dsColor.textPrimary, fontFamily: dsFont.ui }}>
+                  <option value="ALL">All sectors</option>
+                  {sigSectorOptions.map(function (sec) { return <option key={sec} value={sec}>{sec}</option>; })}
+                </select>
+                <select value={sigConfidence} onChange={function (e) { setSigConfidence(e.target.value); }} style={{ fontSize: dsText.small, padding: '6px 8px', borderRadius: dsRadius.md, border: '1px solid ' + dsColor.border, background: dsColor.surface, color: dsColor.textPrimary, fontFamily: dsFont.ui }}>
+                  <option value="ALL">Any confidence</option>
+                  <option value="HIGH">High confidence</option>
+                  <option value="MEDIUM">Medium confidence</option>
+                  <option value="LOW">Low confidence</option>
+                </select>
+                {(sigSector !== 'ALL' || sigConfidence !== 'ALL' || sigFilter !== 'ALL' || sigSearch) && (
+                  <button onClick={function () { setSigFilter('ALL'); setSigSearch(''); setSigSector('ALL'); setSigConfidence('ALL'); }} style={btn()}>clear</button>
+                )}
                 {auth.isAdmin && <button onClick={scanNow} disabled={running || scanStarting} style={btn('#3b82f6')}>{running ? 'scanning...' : 'fresh scan'}</button>}
               </div>
               {signals.length === 0 && (
@@ -1548,9 +1569,9 @@ export default function NepseApp() {
               )}
               {signals.length > 0 && filteredSignals.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '40px 20px', color: dsColor.textFaint, fontSize: dsText.body }}>
-                  {'No signals match ' + (sigFilter !== 'ALL' ? sigFilter : '') + (sigSearch ? ' "' + sigSearch + '"' : '') + '.'}
+                  No signals match your filters.
                   <div style={{ marginTop: 8 }}>
-                    <button onClick={function () { setSigFilter('ALL'); setSigSearch(''); }} style={btn('#3b82f6')}>clear filters</button>
+                    <button onClick={function () { setSigFilter('ALL'); setSigSearch(''); setSigSector('ALL'); setSigConfidence('ALL'); }} style={btn('#3b82f6')}>clear filters</button>
                   </div>
                 </div>
               )}
