@@ -82,11 +82,16 @@ are cleared. Full rationale + the phased plan is in **Production roadmap** below
   Use the LLM only to *reason over* verified numbers — never to source them.
   `scanOneStock` and outcome resolution are wired onto `getVerifiedPrice` (the LLM is
   barred from setting a price). **`merolagani` is LIVE** (real scraped quotes; the
-  deployment default). `sample` is the offline placeholder (labeled, flagged by the
-  disclaimer). `sharesansar` is a not-yet-implemented stub; `nepalstock` is
-  build-ready but **config-gated** on `NEPALSTOCK_API_TOKEN` (disabled/unselectable
-  until set). Sources declare `requiresEnv`; unavailable ones are rejected by
-  `setActiveSources`, so the admin can't switch to a disabled source. **ToS caveat:**
+  deployment default) and **`sharesansar` is also LIVE** (real scraped "Today's Share
+  Price" board, tested — `tests/sharesansar.test.js`), giving the verified layer two
+  independent, zero-env-config real sources to cross-check — **not yet selected as an
+  active source on any deployment**, so turning it on in Settings → Market Data
+  Sources alongside merolagani is a real, available redundancy improvement, not a
+  build task. `sample` is the offline placeholder (labeled, flagged by the
+  disclaimer). `nepalstock` is build-ready but **config-gated** on
+  `NEPALSTOCK_API_TOKEN` (disabled/unselectable until set). Sources declare
+  `requiresEnv`; unavailable ones are rejected by `setActiveSources`, so the admin
+  can't switch to a disabled source. **ToS caveat:**
   commercial scraping of merolagani is still pending the P3-1 legal review.
 
 - **Every user-facing signal/brief carries "educational, not financial advice"
@@ -211,9 +216,11 @@ is existential, while A→B remains an open door later (licensed) but B→A does
 - [x] `scanOneStock` + outcome resolution rewired onto `getVerifiedPrice` (LLM can
   no longer set a price).
 - [x] **P1-1**: `merolagani` live fetcher (real NEPSE quotes), validated end-to-end.
-  Config-gated provider system: sources declare `requiresEnv` and stay disabled/
-  unselectable until set (nepalstock ← `NEPALSTOCK_API_TOKEN`). ToS review (P3-1)
-  still pending before commercial use. (sharesansar: not yet implemented.)
+  `sharesansar` is ALSO a live, tested fetcher (not a stub) — a second independent
+  real source ready to activate for cross-checking, just not yet selected as active
+  on any deployment. Config-gated provider system: sources declare `requiresEnv` and
+  stay disabled/unselectable until set (nepalstock ← `NEPALSTOCK_API_TOKEN`). ToS
+  review (P3-1) still pending before commercial use of the scraped sources.
 
 **Phase 1.5 — Learning & validation (robust, explainable "RL").** — harness DONE.
 - [x] **Backtest / replay harness** `src/lib/backtest.js` — the validation

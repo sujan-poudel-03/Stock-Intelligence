@@ -55,6 +55,30 @@ surfaces (Market Data Sources, Notifications).
 - **Email alerts:** set `RESEND_API_KEY`. Users then opt in per-channel + per-direction in
   Settings → Alerts. The UI now warns if a channel is enabled but its key isn't set.
 
+## 4a. Closer-to-intraday scan cadence (optional, closes a real trader gap)
+
+Vercel Hobby's cron scheduler only supports once-daily invocations (why
+`vercel.json` schedules `45 4 * * *` and not, say, every 15 minutes) — that's a
+platform limit, not a code one. NEPSE trades 11:00–15:00 NPT, so a once-a-day scan
+misses intraday moves entirely, which is a real gap for anyone using this for
+swing trading. Two ways to close it, in order of effort:
+
+1. **Free external scheduler** (no Vercel plan change): sign up for a free cron
+   service (e.g. cron-job.org) and point it at
+   `POST https://<your-deployment>/api/cron/scan` with header
+   `Authorization: Bearer <CRON_SECRET>`, on a schedule inside trading hours (e.g.
+   every 15–30 min, 11:00–15:00 NPT / 05:15–09:15 UTC). The endpoint already accepts
+   this exact call shape — it's what Vercel's own cron does — so no code change is
+   needed, only the external scheduler's own signup + configuration, which only the
+   deployment owner can do (it needs the live URL and secret).
+2. **Upgrade off Hobby**: Vercel Pro allows more frequent native cron, removing the
+   need for an external scheduler.
+
+Either way, watch the daily LLM budget (`LLM_DAILY_BUDGET`) — more scan cycles per
+day means more LLM calls; a 15-minute cadence across a 4-hour trading window is up
+to 16x today's call volume if left unchanged, so raising the cadence should come
+with either a lower per-cycle symbol count or a higher budget ceiling.
+
 ## 5. Seed the scan universe
 
 The scan universe = union of all users' watchlists + discovery. To keep signals flowing:
