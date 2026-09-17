@@ -19,8 +19,10 @@ import { color as dsColor, spacing as dsSpacing, radius as dsRadius, font as dsF
 import StatusPill from '@/design-system/components/StatusPill';
 import Pill from '@/design-system/components/Pill';
 import SectionCard from '@/design-system/components/SectionCard';
+import { suggestedQuantity } from '@/lib/positionSizing';
 import PriceChart from '@/design-system/components/PriceChart';
 import IndicatorSummary from '@/design-system/components/IndicatorSummary';
+import ConcentrationBars from '@/design-system/components/ConcentrationBars';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -416,6 +418,7 @@ export default function NepseApp() {
 
   // Client-side bookkeeping
   const [portfolio, setPortfolio] = useState([]);
+  const [portfolioConcentration, setPortfolioConcentration] = useState(null); // server-computed sector/symbol concentration (Phase C risk tools)
   const [tradeLog, setTradeLog] = useState([]);
   const [stockCache, setStockCache] = useState({});
   const [watchlist, setWatchlist] = useState([]);
@@ -608,12 +611,27 @@ export default function NepseApp() {
   // empty when signed out). tradeLog is derived from the closed rows.
   const reloadPortfolio = useCallback(async () => {
     const mode = !auth.configured ? 'local' : (auth.signedIn ? 'api' : 'gated');
-    if (mode === 'gated') { setPortfolio([]); setTradeLog([]); return; }
+    if (mode === 'gated') { setPortfolio([]); setTradeLog([]); setPortfolioConcentration(null); return; }
     try {
       const rows = await store.loadPortfolio(mode, exchange);
       setPortfolio(rows.map(posFromRow));
       setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
     } catch (err) { console.error('portfolio load failed:', err); }
+    // Server-computed sector/symbol concentration (Phase C risk tools) — 'api' mode
+    // only; it needs sector data cross-referenced server-side and a signed-in token.
+    if (mode === 'api') {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('/api/portfolio/summary?exchange=' + encodeURIComponent(exchange), {
+          cache: 'no-store',
+          headers: token ? { Authorization: 'Bearer ' + token } : {},
+        });
+        const d = await res.json();
+        setPortfolioConcentration(d && d.ok ? d.concentration : null);
+      } catch { setPortfolioConcentration(null); }
+    } else {
+      setPortfolioConcentration(null);
+    }
   }, [auth.configured, auth.signedIn, exchange]);
 
   // -- status polling ---------------------------------------------------------
@@ -762,22 +780,19 @@ export default function NepseApp() {
     let alive = true;
     (async () => {
       if (mode === 'gated') {
-        if (alive) { setWatchlist([]); setWlSources({}); setPortfolio([]); setTradeLog([]); }
+        if (alive) { setWatchlist([]); setWlSources({}); setPortfolio([]); setTradeLog([]); setPortfolioConcentration(null); }
         return;
       }
       try {
         const wl = await store.loadWatchlist(mode, exchange);
         if (!alive) return;
         setWatchlist(wl.symbols); setWlSources(wl.sources);
-        const rows = await store.loadPortfolio(mode, exchange);
-        if (!alive) return;
-        setPortfolio(rows.map(posFromRow));
-        setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
+        if (alive) await reloadPortfolio();
       } catch (err) { console.error('user data load failed:', err); }
     })();
     return function () { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.loading, auth.configured, auth.signedIn, exchange]);
+  }, [auth.loading, auth.configured, auth.signedIn, exchange, reloadPortfolio]);
 
   // Load the GLOBAL curated/seed watchlist (per-exchange). PUBLIC — runs regardless of
   // auth mode (even signed-out / gated), because it is shared market data, not per-user
@@ -992,6 +1007,7 @@ export default function NepseApp() {
       signals: signals.slice(0, 12).map(function (s) { return { symbol: s.symbol, signal: s.signal, price: s.price }; }),
       watchlist: watchlist,
       market: market ? { index: market.index, change_pct: market.change_pct, sentiment: market.sentiment } : null,
+      exchange: exchange,
     };
     getAccessToken().then(function (token) {
       return fetch('/api/chat', {
@@ -1417,6 +1433,9 @@ export default function NepseApp() {
                     return <div key={item[0]} style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 6, padding: '8px 10px' }}><div style={{ fontSize: 9, color: '#4a5568', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3 }}>{item[0]}</div><div style={{ fontSize: 16, fontWeight: 600, color: item[2] || '#e2e8f0' }}>{item[1]}</div></div>;
                   })}
                 </div>
+              )}
+              {portfolioConcentration && (
+                <ConcentrationBars bySector={portfolioConcentration.bySector} threshold={portfolioConcentration.threshold} overConcentrated={portfolioConcentration.overConcentrated} />
               )}
               {gated
                 ? <SignInPrompt title="Sign in to track your positions" sub="Log your buys and sells to see invested amount, break-even and live P&L. Your positions are private to your account." onSignIn={auth.signIn} />
@@ -2347,11 +2366,36 @@ function SignInPrompt(props) {
 // Shared buy form (used in Today + Signals tabs).
 function BuyForm(props) {
   var s = props.s;
+  // Position-size helper (Phase C risk tools) — nested here because a size
+  // suggestion is only meaningful once a stop-loss exists, which this same form
+  // collects. Capital/risk% are a device-local preference (not sent anywhere),
+  // matching how the app already persists device-only view prefs (e.g. ni:exchange).
+  var risk = store.deviceGet('ni:risk', { capital: '', riskPct: '1' });
+  var [capital, setCapital] = useState(risk.capital || '');
+  var [riskPct, setRiskPct] = useState(risk.riskPct || '1');
+  function saveRisk(next) { store.deviceSet('ni:risk', next); }
+  var sizeHint = suggestedQuantity({ capital: capital, riskPct: riskPct, entry: s.price, stopLoss: props.buySL || s.sl });
+
   return (
     <div style={{ background: '#080a0f', borderRadius: 6, padding: 10, border: '1px solid #1c2333' }}>
       <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
         <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>quantity</div><input value={props.buyQty} onChange={function (e) { props.setBuyQty(e.target.value); }} type="number" placeholder="units" /></div>
         <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>stop loss</div><input value={props.buySL} onChange={function (e) { props.setBuySL(e.target.value); }} type="number" placeholder={s.sl ? 'Rs ' + s.sl : ''} /></div>
+      </div>
+      <div style={{ background: '#07090e', borderRadius: 5, padding: 8, marginBottom: 8, border: '1px solid #1c2333' }}>
+        <div style={{ fontSize: 9, color: '#4a5568', marginBottom: 6 }}>size by risk (optional — never auto-applied)</div>
+        <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 6 }}>
+          <div><div style={{ fontSize: 9, color: '#2a3550', marginBottom: 2 }}>capital (Rs)</div><input value={capital} onChange={function (e) { var v = e.target.value; setCapital(v); saveRisk({ capital: v, riskPct: riskPct }); }} type="number" placeholder="e.g. 100000" /></div>
+          <div><div style={{ fontSize: 9, color: '#2a3550', marginBottom: 2 }}>risk % of capital</div><input value={riskPct} onChange={function (e) { var v = e.target.value; setRiskPct(v); saveRisk({ capital: capital, riskPct: v }); }} type="number" placeholder="e.g. 1" /></div>
+        </div>
+        {sizeHint ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: '#8899b4' }}>{'risking Rs ' + Math.round(sizeHint.riskAmount).toLocaleString('en-IN') + ' -> suggests ' + sizeHint.qty + ' units (' + sizeHint.pctOfCapital.toFixed(0) + '% of capital)'}</span>
+            <button onClick={function () { props.setBuyQty(String(sizeHint.qty)); }} style={btn('#3b82f6', true)}>use {sizeHint.qty}</button>
+          </div>
+        ) : (capital || riskPct !== '1') && (
+          <div style={{ fontSize: 10, color: '#2a3550' }}>enter capital + a stop-loss above to see a suggested size</div>
+        )}
       </div>
       <div style={{ marginBottom: 8 }}><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>why? <span style={{ color: '#ef4444' }}>required</span></div><input value={props.buyReason} onChange={function (e) { props.setBuyReason(e.target.value); }} placeholder="your reason" /></div>
       {props.buyQty && s.price && <BuyChargePreview qty={props.buyQty} price={s.price} />}

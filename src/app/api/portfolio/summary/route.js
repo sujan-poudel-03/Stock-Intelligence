@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { withGuard } from '@/lib/respond';
 import { buildPortfolioSummary } from '@/lib/portfolioSummary';
+import { normalizeExchange } from '@/lib/exchanges';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// GET /api/portfolio/summary -> server-side portfolio P&L + concentration for this user.
+// GET /api/portfolio/summary?exchange=NEPSE -> server-side portfolio P&L + concentration
+// for this user, scoped to ONE exchange.
 //
 // The heavier companion to GET /api/portfolio (which stays the fast raw-rows list). This
 // computes cost basis, realized/unrealized net-of-charges P&L, and sector/symbol
@@ -18,6 +20,7 @@ export const GET = withGuard(async (request) => {
   const user = await getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
 
-  const summary = await buildPortfolioSummary(user);
+  const exchange = normalizeExchange(request.nextUrl.searchParams.get('exchange'));
+  const summary = await buildPortfolioSummary(user, exchange);
   return NextResponse.json(summary);
 });
