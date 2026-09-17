@@ -20,6 +20,7 @@ import StatusPill from '@/design-system/components/StatusPill';
 import Pill from '@/design-system/components/Pill';
 import SectionCard from '@/design-system/components/SectionCard';
 import PriceChart from '@/design-system/components/PriceChart';
+import IndicatorSummary from '@/design-system/components/IndicatorSummary';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -2038,6 +2039,12 @@ export default function NepseApp() {
               <SectionHeader title="Price History" sub="daily close · verified" mb={8} />
               <PriceChart bars={ovBars} />
             </div>
+            {ovBars && ovBars.length > 1 && (
+              <div style={{ ...card(), marginBottom: 10 }}>
+                <SectionHeader title="Technical Indicators" sub="computed from verified closes, not agent output" mb={8} />
+                <IndicatorSummary bars={ovBars} />
+              </div>
+            )}
             {ovData && ovData.price && (
               <div style={card('#10b981')}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
