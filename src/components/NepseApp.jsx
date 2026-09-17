@@ -19,6 +19,7 @@ import { color as dsColor, spacing as dsSpacing, radius as dsRadius, font as dsF
 import StatusPill from '@/design-system/components/StatusPill';
 import Pill from '@/design-system/components/Pill';
 import SectionCard from '@/design-system/components/SectionCard';
+import PriceChart from '@/design-system/components/PriceChart';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -434,6 +435,7 @@ export default function NepseApp() {
   const [ovAnalysis, setOvAnalysis] = useState('');
   const [ovSig, setOvSig] = useState(null);
   const [ovLoading, setOvLoading] = useState(false);
+  const [ovBars, setOvBars] = useState(null); // price_history bars for the chart (redesign Phase A)
 
   // Trade forms
   const [buyTarget, setBuyTarget] = useState(null);
@@ -904,7 +906,11 @@ export default function NepseApp() {
   }
 
   function openStock(sym) {
-    setOvSym(sym); setOvData(null); setOvAnalysis(''); setOvSig(null); setOvLoading(true);
+    setOvSym(sym); setOvData(null); setOvAnalysis(''); setOvSig(null); setOvLoading(true); setOvBars(null);
+    fetch('/api/price-history?symbol=' + encodeURIComponent(sym) + '&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) { if (Array.isArray(res.bars)) setOvBars(res.bars); })
+      .catch(function () { /* chart just shows its own empty state */ });
     fetch('/api/stock?symbol=' + encodeURIComponent(sym) + '&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (res) {
@@ -2027,6 +2033,10 @@ export default function NepseApp() {
               {ovSig && <span style={{ fontSize: 10, fontWeight: 700, color: SIG_COLORS[ovSig.signal] || '#4a5568', background: (SIG_COLORS[ovSig.signal] || '#4a5568') + '20', padding: '2px 8px', borderRadius: 3 }}><Term k={ovSig.signal}>{ovSig.signal}</Term></span>}
               {ovLoading && <span style={{ fontSize: 10, color: '#4a5568' }}>loading...</span>}
               <button onClick={function () { setOvSym(null); }} style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 5, border: '1px solid #1c2333', background: 'none', color: '#4a5568', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>close</button>
+            </div>
+            <div style={{ ...card(), marginBottom: 10 }}>
+              <SectionHeader title="Price History" sub="daily close · verified" mb={8} />
+              <PriceChart bars={ovBars} />
             </div>
             {ovData && ovData.price && (
               <div style={card('#10b981')}>

@@ -212,3 +212,32 @@ export async function paperTradingReady() {
 export function __resetPaperTradingProbe() {
   paperTradingProbe = null;
 }
+
+// --- Price history (redesign Phase A — charts) ------------------------------
+// Same discipline as systemWatchlistReady: until 20260917000000_price_history.sql
+// is applied, touching the `price_history` table would ERROR. Every read/write
+// (scan-chain recording, chart API) is gated on this probe so an unmigrated DB is
+// byte-for-byte as today (no price history recorded; chart UI shows an honest
+// "not enough history yet" state instead of erroring).
+
+let priceHistoryProbe = null;
+
+// priceHistoryReady(): true when the global `price_history` table exists.
+export async function priceHistoryReady() {
+  if (priceHistoryProbe) return priceHistoryProbe;
+  priceHistoryProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('price_history').select('symbol').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return priceHistoryProbe;
+}
+
+// Test-only: reset the memoized price-history probe.
+export function __resetPriceHistoryProbe() {
+  priceHistoryProbe = null;
+}

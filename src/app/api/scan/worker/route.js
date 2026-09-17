@@ -198,7 +198,7 @@ async function processJob(supabase, job, origin, { chain = true } = {}) {
     // the 'no data from source' fail-fast, and NOT the fail-closed price guard (that
     // still lives inside scanOneStock). The success path is untouched.
     const signal = await withTimeout(
-      scanOneStock(job.symbol, scan?.market || {}, weightCtx, null, { exchange }),
+      scanOneStock(job.symbol, scan?.market || {}, weightCtx, null, { exchange, supabase }),
       SCAN_JOB_TIMEOUT_MS,
       job.symbol
     );
