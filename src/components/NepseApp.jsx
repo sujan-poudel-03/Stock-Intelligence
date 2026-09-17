@@ -23,6 +23,7 @@ import { suggestedQuantity } from '@/lib/positionSizing';
 import PriceChart from '@/design-system/components/PriceChart';
 import IndicatorSummary from '@/design-system/components/IndicatorSummary';
 import ConcentrationBars from '@/design-system/components/ConcentrationBars';
+import BacktestDemo from '@/design-system/components/BacktestDemo';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -2062,6 +2063,12 @@ export default function NepseApp() {
               <div style={{ ...card(), marginBottom: 10 }}>
                 <SectionHeader title="Technical Indicators" sub="computed from verified closes, not agent output" mb={8} />
                 <IndicatorSummary bars={ovBars} />
+              </div>
+            )}
+            {ovBars && ovBars.length >= 10 && (
+              <div style={{ ...card('#a78bfa'), marginBottom: 10 }}>
+                <SectionHeader title="Backtest Harness" sub="reference strategy demo, not agent output" mb={8} color="#a78bfa" />
+                <BacktestDemo bars={ovBars} />
               </div>
             )}
             {ovData && ovData.price && (
