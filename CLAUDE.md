@@ -32,6 +32,25 @@ make an admin, Google Sign-In setup, and the owner-action checklist.
   real call site needs it — no speculative "complete" component library
   (consistent with the no-abstractions-beyond-what's-needed rule below).
 
+- **Theming: neutral colors are CSS variables, semantic colors are constant
+  literals — never hardcode a new neutral hex.** The app supports a dark
+  (default) and light theme (`src/hooks/useTheme.js`, a device-local
+  preference, toggled in Settings). Only the NEUTRAL palette — canvas/surface/
+  border/text scale — changes between themes, defined as CSS custom properties
+  in `src/app/globals.css` (`:root` = dark, `:root[data-theme='light']` =
+  overrides) and consumed via `src/design-system/tokens.js`'s `color.*`
+  neutral keys (which resolve to `var(--x)` strings). SEMANTIC status colors
+  (BUY/positive green, SELL/negative red, HOLD/warning amber, info blue,
+  discovery violet) are deliberately left as constant hex literals, NOT theme
+  variables — this is what lets the ~90 call sites that build a translucent
+  tint by string-concatenating an alpha suffix onto an accent color (e.g.
+  `sc + '22'`) keep working unchanged; a CSS `var()` reference cannot have an
+  alpha suffix appended to it as a string. Consequence: a new **neutral**
+  surface/border/text color must be added to `globals.css` (both blocks) and
+  referenced via `var(--x)`, never a hardcoded hex — hardcoding one silently
+  breaks it for light-theme users. A new **semantic/status** color can stay a
+  plain hex literal, matching the existing accent colors.
+
 - **All model calls go through `callLLM`** (`src/lib/llm.js`). Never import a
   provider SDK (`@anthropic-ai/sdk`, `@google/genai`) into feature code. Parse
   model output with `parseJson()` (returns `null` on junk).
