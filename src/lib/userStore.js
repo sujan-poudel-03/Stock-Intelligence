@@ -212,10 +212,14 @@ export async function loadPaper() {
   }
 }
 
-// submitPaperOrder({ symbol, side, qty }) -> { ok, summary } | { error } (throws on reject
-// so the caller can toast the exact reason: insufficient cash / oversell / caps / no price).
-export async function submitPaperOrder({ symbol, side, qty }) {
-  const res = await api('/api/paper/order', { method: 'POST', body: { symbol, side, qty } });
+// submitPaperOrder({ symbol, side, qty, exchange }) -> { ok, summary } | { error }
+// (throws on reject so the caller can toast the exact reason: insufficient cash /
+// oversell / caps / no price / unsupported exchange). exchange is threaded through
+// so the server can reject a non-NEPSE order explicitly rather than silently
+// mislabeling it — see /api/paper/order (paper trading is NEPSE-only v1; the
+// money-math engine in charges.js is NEPSE-rate and has no NYSE equivalent yet).
+export async function submitPaperOrder({ symbol, side, qty, exchange }) {
+  const res = await api('/api/paper/order', { method: 'POST', body: { symbol, side, qty, exchange } });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(d.error || 'order rejected');
   return d;

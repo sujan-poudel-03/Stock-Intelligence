@@ -20,6 +20,7 @@ import StatusPill from '@/design-system/components/StatusPill';
 import Pill from '@/design-system/components/Pill';
 import SectionCard from '@/design-system/components/SectionCard';
 import { suggestedQuantity } from '@/lib/positionSizing';
+import { toCsv, downloadCsv } from '@/lib/csvExport';
 import PriceChart from '@/design-system/components/PriceChart';
 import IndicatorSummary from '@/design-system/components/IndicatorSummary';
 import ConcentrationBars from '@/design-system/components/ConcentrationBars';
@@ -1578,7 +1579,24 @@ export default function NepseApp() {
               })}
               {closedSells.length > 0 && (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 9, color: '#4a5568', letterSpacing: '.08em', marginBottom: 8 }}>CLOSED TRADES</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ fontSize: 9, color: '#4a5568', letterSpacing: '.08em' }}>CLOSED TRADES</div>
+                    <button onClick={function () {
+                      const csv = toCsv(closedSells, [
+                        { label: 'Symbol', key: 'symbol' },
+                        { label: 'Closed Date', key: 'date' },
+                        { label: 'Qty', key: 'qty' },
+                        { label: 'Buy Price', key: 'buyPrice' },
+                        { label: 'Sell Price', key: 'price' },
+                        { label: 'Hold Days', key: 'holdDays' },
+                        { label: 'Gross P&L', key: 'gpl' },
+                        { label: 'CGT', key: 'cgt' },
+                        { label: 'Charges', key: 'tot' },
+                        { label: 'Net P&L', key: 'npl' },
+                      ]);
+                      downloadCsv(exchange + '-closed-trades-' + new Date().toISOString().slice(0, 10) + '.csv', csv);
+                    }} style={btn('#3b82f6', true)}>export CSV</button>
+                  </div>
                   {closedSells.map(function (t) {
                     return <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 10px', background: '#0d1018', border: '1px solid #1c2333', borderLeft: '2px solid ' + (t.npl >= 0 ? '#10b981' : '#ef4444'), borderRadius: 6, marginBottom: 5 }}>
                       <div><span style={{ fontSize: 12, fontWeight: 500, color: '#e2e8f0' }}>{t.symbol}</span><div style={{ fontSize: 9, color: '#4a5568' }}>{t.qty + 'u Rs' + t.price + ' ' + t.holdDays + 'd'}</div></div>
@@ -1762,7 +1780,24 @@ export default function NepseApp() {
                     </div>
                   )}
 
-                  <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', margin: '4px 0 8px', fontFamily: 'Inter,sans-serif' }}>Recent outcomes <span style={{ fontWeight: 400, color: '#4a5568' }}>· return shown NET of NEPSE charges</span></div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 0 8px' }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Recent outcomes <span style={{ fontWeight: 400, color: '#4a5568' }}>· return shown NET of NEPSE charges</span></div>
+                    <button onClick={function () {
+                      const csv = toCsv(track.recent, [
+                        { label: 'Symbol', key: 'symbol' },
+                        { label: 'Signal', key: 'signal' },
+                        { label: 'Sector', key: 'sector' },
+                        { label: 'Entry', key: 'entry' },
+                        { label: 'Exit', key: 'exit' },
+                        { label: 'Outcome', key: 'outcome' },
+                        { label: 'Exit Reason', key: 'exitReason' },
+                        { label: 'Gross Return %', key: 'returnPct' },
+                        { label: 'Net Return %', key: 'netReturnPct' },
+                        { label: 'Resolved At', key: 'at' },
+                      ]);
+                      downloadCsv(exchange + '-track-record-' + new Date().toISOString().slice(0, 10) + '.csv', csv);
+                    }} style={btn('#3b82f6', true)}>export CSV</button>
+                  </div>
                   {track.recent.map(function (r, i) {
                     // WIN green · LOSS red · EXPIRE (time-stop) amber — the honest mix.
                     var oc = r.outcome === 'WIN' ? '#10b981' : r.outcome === 'EXPIRE' ? '#c08a2c' : '#ef4444';
@@ -2357,7 +2392,7 @@ function PaperPanel(props) {
   function submit() {
     if (busy) return;
     setBusy(true);
-    store.submitPaperOrder({ symbol: symbol, side: side, qty: qtyN })
+    store.submitPaperOrder({ symbol: symbol, side: side, qty: qtyN, exchange: props.exchange })
       .then(function (d) {
         refresh(d);
         showToast('SIMULATED ' + side + ' filled: ' + qtyN + ' ' + symbol, 'ok');
