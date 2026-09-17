@@ -270,3 +270,30 @@ export async function telegramLinkReady() {
 export function __resetTelegramLinkProbe() {
   telegramLinkProbe = null;
 }
+
+// --- Browser push subscriptions (redesign Phase G — reach) -------------------
+// Same discipline as paperTradingReady: until 20260919000000_push_subscriptions.sql
+// is applied, touching the `push_subscriptions` table would ERROR. Gated so an
+// unmigrated DB reports the push toggle as enabled:false rather than erroring.
+
+let pushSubscriptionsProbe = null;
+
+// pushSubscriptionsReady(): true when the `push_subscriptions` table exists.
+export async function pushSubscriptionsReady() {
+  if (pushSubscriptionsProbe) return pushSubscriptionsProbe;
+  pushSubscriptionsProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('push_subscriptions').select('id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return pushSubscriptionsProbe;
+}
+
+// Test-only: reset the memoized push-subscriptions probe.
+export function __resetPushSubscriptionsProbe() {
+  pushSubscriptionsProbe = null;
+}

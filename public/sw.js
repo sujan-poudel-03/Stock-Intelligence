@@ -74,3 +74,39 @@ self.addEventListener('fetch', (event) => {
   // Default: network, with a cache fallback if offline.
   event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
+
+// --- Web Push (Phase G reach) ------------------------------------------------
+// NOTE: nothing in this codebase sends an encrypted push yet (see
+// src/lib/pushSubscriptions.js / supabase/migrations/20260919000000_push_
+// subscriptions.sql) — this handler exists so the moment sending IS wired up,
+// no client-side change is needed. Defensive: a push with no/malformed payload
+// still shows a generic notification rather than doing nothing (some push
+// services send empty "wake up and check" pushes by design).
+self.addEventListener('push', (event) => {
+  let payload = { title: 'NEPSE Intelligence', body: 'You have a new alert.' };
+  try {
+    if (event.data) payload = { ...payload, ...event.data.json() };
+  } catch {
+    /* non-JSON or empty payload — fall back to the generic text above */
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: payload.url || '/' },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find((c) => c.url.includes(self.location.origin));
+      if (existing) return existing.focus();
+      return self.clients.openWindow(url);
+    })
+  );
+});

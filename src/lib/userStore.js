@@ -282,6 +282,42 @@ export async function unlinkTelegram() {
   return true;
 }
 
+// ---- browser push (capture-only for now — see src/lib/pushSubscriptions.js) --
+// GLOBAL/public read (no auth) — a VAPID public key is safe to expose.
+export async function getPushPublicKey() {
+  try {
+    const res = await fetch('/api/push/vapid-public-key', { cache: 'no-store' });
+    const d = await res.json();
+    return d.enabled ? d.publicKey : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPushStatus() {
+  try {
+    const res = await api('/api/push/status');
+    const d = await res.json();
+    return !!d.subscribed;
+  } catch {
+    return false;
+  }
+}
+
+export async function subscribePush(subscription) {
+  const res = await api('/api/push/subscribe', { method: 'POST', body: { subscription } });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not subscribe');
+  return true;
+}
+
+export async function unsubscribePush(endpoint) {
+  const res = await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint } });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not unsubscribe');
+  return true;
+}
+
 export async function saveAlertPrefs(mode, prefs) {
   if (mode === 'api') {
     await api('/api/alerts', { method: 'PUT', body: prefs });

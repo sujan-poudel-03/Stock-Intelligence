@@ -429,6 +429,9 @@ export default function NepseApp() {
   const [alertPrefs, setAlertPrefs] = useState({ channels: {}, thresholds: {}, telegramLinked: false }); // per-user alert prefs
   const [telegramLinkInfo, setTelegramLinkInfo] = useState(null); // { code, expiresAt, botUsername } while linking (Phase G reach)
   const [telegramLinking, setTelegramLinking] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false); // server has VAPID_PUBLIC_KEY configured
+  const [pushSubscribed, setPushSubscribed] = useState(false); // this device has a stored subscription
+  const [pushBusy, setPushBusy] = useState(false);
 
   // Chat
   const [chat, setChat] = useState([]);
@@ -568,6 +571,52 @@ export default function NepseApp() {
     store.unlinkTelegram()
       .then(function () { setAlertPrefs(function (p) { return Object.assign({}, p, { telegramLinked: false }); }); setTelegramLinkInfo(null); showToast('Telegram unlinked', 'info'); })
       .catch(function (e) { showToast(e.message || 'Could not unlink', 'err'); });
+  }
+
+  // Browser push — connect/disconnect THIS device (capture-only for now; see
+  // src/lib/pushSubscriptions.js for why sending isn't wired up yet). Standard
+  // Push API calls (well-documented, stable browser API) — the part this session
+  // could not verify is the future encrypted SEND, not this subscribe flow.
+  function urlBase64ToUint8Array(base64url) {
+    var pad = '='.repeat((4 - (base64url.length % 4)) % 4);
+    var base64 = (base64url + pad).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = window.atob(base64);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function enablePush() {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      showToast('Push notifications are not supported in this browser', 'err'); return;
+    }
+    setPushBusy(true);
+    Notification.requestPermission()
+      .then(function (perm) {
+        if (perm !== 'granted') throw new Error('Notification permission denied');
+        return navigator.serviceWorker.ready;
+      })
+      .then(function (reg) { return store.getPushPublicKey().then(function (key) { return { reg: reg, key: key }; }); })
+      .then(function (r) {
+        if (!r.key) throw new Error('Push is not configured on this deployment yet');
+        return r.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(r.key) });
+      })
+      .then(function (sub) { return store.subscribePush(sub.toJSON()); })
+      .then(function () { setPushSubscribed(true); showToast('Push notifications connected on this device', 'ok'); })
+      .catch(function (e) { showToast(e.message || 'Could not enable push', 'err'); })
+      .then(function () { setPushBusy(false); });
+  }
+  function disablePush() {
+    setPushBusy(true);
+    navigator.serviceWorker.ready
+      .then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) {
+        if (!sub) return;
+        var endpoint = sub.endpoint;
+        return sub.unsubscribe().then(function () { return store.unsubscribePush(endpoint); });
+      })
+      .then(function () { setPushSubscribed(false); showToast('Push notifications disconnected', 'info'); })
+      .catch(function (e) { showToast(e.message || 'Could not disable push', 'err'); })
+      .then(function () { setPushBusy(false); });
   }
 
   // Exchange is a personal VIEW preference: always device-local (so logged-out
@@ -845,9 +894,19 @@ export default function NepseApp() {
     store.loadAlertPrefs(currentMode())
       .then(function (p) { if (alive) setAlertPrefs(p); })
       .catch(function () {});
+    if (currentMode() === 'api') {
+      store.getPushStatus().then(function (s) { if (alive) setPushSubscribed(s); }).catch(function () {});
+    }
     return function () { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, auth.loading, auth.configured, auth.signedIn]);
+
+  // Whether the SERVER has push configured at all (VAPID_PUBLIC_KEY set) — a
+  // capability check, runs once regardless of tab/auth so the Settings row
+  // knows whether to offer the feature.
+  useEffect(() => {
+    store.getPushPublicKey().then(function (k) { setPushEnabled(!!k); }).catch(function () {});
+  }, []);
 
   // -- actions ----------------------------------------------------------------
   // A scan is a SYSTEM/admin action: post to the admin-gated /api/admin/scan (which
@@ -1933,6 +1992,26 @@ export default function NepseApp() {
                       </div>
                     );
                   })}
+                  {/* Browser push — a device-connection step, deliberately NOT one of the
+                      channel toggles above: nothing sends an alert THROUGH push yet (see
+                      src/lib/pushSubscriptions.js), only the plumbing to connect a device
+                      exists so far. Framed honestly as "coming soon" rather than implying
+                      it already delivers signal alerts. */}
+                  {pushEnabled && (
+                    <div style={{ padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div>
+                          <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Browser push</div>
+                          <div style={{ fontSize: 9, color: '#4a5568', marginTop: 2 }}>Connect this device now — alert delivery here is coming soon.</div>
+                        </div>
+                        {pushSubscribed ? (
+                          <button onClick={disablePush} disabled={pushBusy} style={btn('#ef4444', true)}>{pushBusy ? '…' : 'disconnect'}</button>
+                        ) : (
+                          <button onClick={enablePush} disabled={pushBusy} style={btn('#3b82f6', true)}>{pushBusy ? 'connecting…' : 'connect device'}</button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {[['onBuy', 'Alert on BUY signals'], ['onSell', 'Alert on SELL signals']].map(function (t) {
                     return (
                       <div key={t[0]} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
