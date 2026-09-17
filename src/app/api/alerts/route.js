@@ -17,20 +17,32 @@ function unauthorized() {
   return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
 }
 
-// GET /api/alerts -> { channels: {email,telegram}, thresholds: {onBuy,onSell} }
+// GET /api/alerts -> { channels: {email,telegram}, thresholds: {onBuy,onSell}, telegramLinked }
 export const GET = withGuard(async (request) => {
   const user = await getUserFromRequest(request);
   if (!user) return unauthorized();
 
   const supabase = getUserSupabase(user.token);
-  const { data, error } = await supabase
+  // telegram_chat_id is selected best-effort: on an unmigrated DB (column absent)
+  // this whole select would error, so fall back to the base columns and report
+  // telegramLinked: false rather than 500ing the whole alerts panel.
+  let data;
+  let telegramLinked = false;
+  const full = await supabase
     .from('alert_prefs')
-    .select('channels, thresholds')
+    .select('channels, thresholds, telegram_chat_id')
     .eq('user_id', user.id)
     .maybeSingle();
-  if (error) throw error;
+  if (!full.error) {
+    data = full.data;
+    telegramLinked = !!full.data?.telegram_chat_id;
+  } else {
+    const base = await supabase.from('alert_prefs').select('channels, thresholds').eq('user_id', user.id).maybeSingle();
+    if (base.error) throw base.error;
+    data = base.data;
+  }
   // Always hand back a full, defined shape so the UI can bind straight to it.
-  return NextResponse.json(normalizeAlertPrefs(data || {}));
+  return NextResponse.json({ ...normalizeAlertPrefs(data || {}), telegramLinked });
 });
 
 // PUT /api/alerts { channels, thresholds } -> upsert my prefs

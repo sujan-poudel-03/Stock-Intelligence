@@ -54,6 +54,21 @@ surfaces (Market Data Sources, Notifications).
   testing, so this strengthens verification without over-rejecting.
 - **Email alerts:** set `RESEND_API_KEY`. Users then opt in per-channel + per-direction in
   Settings → Alerts. The UI now warns if a channel is enabled but its key isn't set.
+- **Per-user Telegram alerts** (closes the "no push/mobile alerts" gap): each user
+  links their own chat — separate from the single operator `TELEGRAM_CHAT_ID` used
+  for the admin digest. One-time setup:
+  1. Create a bot via [@BotFather](https://t.me/BotFather) (`/newbot`) → note the
+     **bot token** and the **bot username** (without the `@`).
+  2. Set `TELEGRAM_BOT_TOKEN` (shared with the existing operator-digest channel) and
+     `TELEGRAM_BOT_USERNAME` (so the app can build a one-tap `t.me/<bot>?start=<code>`
+     link instead of asking users to type `/start <code>` by hand).
+  3. Generate a random secret and set `TELEGRAM_WEBHOOK_SECRET`, then register the
+     webhook once:
+     `curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-deployment>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"`.
+     This secret is required — without it, anyone who finds the public webhook URL
+     could forge a fake Telegram update and redeem another user's link code.
+  4. Users then toggle Telegram on in Settings → My Alerts and follow the "link
+     telegram" flow that appears — no further owner action per user.
 
 ## 4a. Closer-to-intraday scan cadence (optional, closes a real trader gap)
 

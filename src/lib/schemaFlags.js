@@ -241,3 +241,32 @@ export async function priceHistoryReady() {
 export function __resetPriceHistoryProbe() {
   priceHistoryProbe = null;
 }
+
+// --- Per-user Telegram linking (redesign Phase G — reach) -------------------
+// Same discipline as paperTradingReady: until 20260918000000_telegram_link.sql is
+// applied, touching alert_prefs.telegram_chat_id/telegram_link_code would ERROR.
+// Every read/write (link-code issuance, the webhook, delivery) is gated on this
+// probe so an unmigrated DB is byte-for-byte as today (Telegram toggle exists but
+// never actually links or delivers per-user).
+
+let telegramLinkProbe = null;
+
+// telegramLinkReady(): true when alert_prefs carries the telegram_chat_id column.
+export async function telegramLinkReady() {
+  if (telegramLinkProbe) return telegramLinkProbe;
+  telegramLinkProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('alert_prefs').select('telegram_chat_id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return telegramLinkProbe;
+}
+
+// Test-only: reset the memoized telegram-link probe.
+export function __resetTelegramLinkProbe() {
+  telegramLinkProbe = null;
+}

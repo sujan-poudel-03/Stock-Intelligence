@@ -426,7 +426,9 @@ export default function NepseApp() {
   const [wlSources, setWlSources] = useState({}); // { SYMBOL: 'manual'|'discovered'|'holding' }
   const [systemWatchlist, setSystemWatchlist] = useState([]); // GLOBAL curated list [{ symbol, source }]
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [alertPrefs, setAlertPrefs] = useState({ channels: {}, thresholds: {} }); // per-user alert prefs
+  const [alertPrefs, setAlertPrefs] = useState({ channels: {}, thresholds: {}, telegramLinked: false }); // per-user alert prefs
+  const [telegramLinkInfo, setTelegramLinkInfo] = useState(null); // { code, expiresAt, botUsername } while linking (Phase G reach)
+  const [telegramLinking, setTelegramLinking] = useState(false);
 
   // Chat
   const [chat, setChat] = useState([]);
@@ -551,6 +553,21 @@ export default function NepseApp() {
   function toggleAlertThreshold(key) {
     var th = Object.assign({}, alertPrefs.thresholds); th[key] = !th[key];
     saveAlerts(Object.assign({}, alertPrefs, { thresholds: th }));
+  }
+
+  // Per-user Telegram linking (Phase G reach) — nested under the Telegram channel
+  // row in Settings since a link code is only meaningful once that channel is on.
+  function requestTelegramLink() {
+    setTelegramLinking(true);
+    store.requestTelegramLink()
+      .then(function (info) { setTelegramLinkInfo(info); })
+      .catch(function (e) { showToast(e.message || 'Could not start Telegram linking', 'err'); })
+      .then(function () { setTelegramLinking(false); });
+  }
+  function unlinkTelegramNow() {
+    store.unlinkTelegram()
+      .then(function () { setAlertPrefs(function (p) { return Object.assign({}, p, { telegramLinked: false }); }); setTelegramLinkInfo(null); showToast('Telegram unlinked', 'info'); })
+      .catch(function (e) { showToast(e.message || 'Could not unlink', 'err'); });
   }
 
   // Exchange is a personal VIEW preference: always device-local (so logged-out
@@ -1884,6 +1901,33 @@ export default function NepseApp() {
                         {needsSetup && (
                           <div style={{ marginTop: 6, fontSize: 9, color: '#f59e0b', fontFamily: 'Inter,sans-serif', lineHeight: 1.5 }}>
                             {c[1] + " isn't set up on the server yet — alerts won't send until an admin configures " + (chInfo.requiresEnv || []).join(' + ') + '.'}
+                          </div>
+                        )}
+                        {/* Per-user Telegram linking — nested here because it's only
+                            meaningful once this channel is toggled on (CLAUDE.md
+                            dependent-action rule). */}
+                        {c[0] === 'telegram' && alertPrefs.channels.telegram && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: '#07090e', borderRadius: 6, border: '1px solid #1c2333' }}>
+                            {alertPrefs.telegramLinked ? (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: '#10b981' }}>Telegram chat linked</span>
+                                <button onClick={unlinkTelegramNow} style={btn('#ef4444', true)}>unlink</button>
+                              </div>
+                            ) : telegramLinkInfo ? (
+                              <div>
+                                <div style={{ fontSize: 10, color: '#c8d4e8', marginBottom: 4 }}>
+                                  {telegramLinkInfo.botUsername
+                                    ? <>Open <a href={'https://t.me/' + telegramLinkInfo.botUsername + '?start=' + telegramLinkInfo.code} target="_blank" rel="noreferrer" style={{ color: '#3b82f6' }}>this Telegram link</a> to connect.</>
+                                    : <>Message the bot <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{'/start ' + telegramLinkInfo.code}</span> to connect.</>}
+                                </div>
+                                <div style={{ fontSize: 9, color: '#4a5568' }}>{'Code ' + telegramLinkInfo.code + ' expires in 15 minutes.'}</div>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: '#4a5568' }}>Not linked yet — alerts can&apos;t deliver here.</span>
+                                <button onClick={requestTelegramLink} disabled={telegramLinking} style={btn('#3b82f6', true)}>{telegramLinking ? 'starting…' : 'link telegram'}</button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

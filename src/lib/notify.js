@@ -95,6 +95,27 @@ export async function deliverEmail({ to, subject, text }, env = process.env) {
   return true;
 }
 
+// deliverTelegramDM({ chatId, text }): send to a SPECIFIC linked user's chat (per-
+// user alert delivery — Phase G reach). Config-gated on TELEGRAM_BOT_TOKEN alone
+// (no TELEGRAM_CHAT_ID — that's the operator's own chat, unrelated to a user's
+// linked one). DISTINCT from sendTelegram()/notify(), which fan out the global
+// OPERATOR digest — this targets one user's linked chat_id and must never be used
+// for the operator digest. Returns false (never throws) on missing config/chatId
+// or a non-2xx Telegram response, so a bad/unlinked chat_id degrades silently.
+export async function deliverTelegramDM({ chatId, text }, env = process.env) {
+  if (!env.TELEGRAM_BOT_TOKEN || !chatId) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function sendEmail({ title, text }, env) {
   if (!env.RESEND_API_KEY) return false;
   const { Resend } = await import('resend');

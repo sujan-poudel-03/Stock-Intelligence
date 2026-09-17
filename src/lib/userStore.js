@@ -258,12 +258,28 @@ const EMPTY_ALERTS = { channels: {}, thresholds: {} };
 export async function loadAlertPrefs(mode) {
   if (mode === 'api') {
     const res = await api('/api/alerts');
-    if (!res.ok) return { ...EMPTY_ALERTS };
+    if (!res.ok) return { ...EMPTY_ALERTS, telegramLinked: false };
     const d = await res.json();
-    return { channels: d.channels || {}, thresholds: d.thresholds || {} };
+    return { channels: d.channels || {}, thresholds: d.thresholds || {}, telegramLinked: !!d.telegramLinked };
   }
-  if (mode === 'local') return lsGet(LS_ALERTS, { ...EMPTY_ALERTS });
-  return { ...EMPTY_ALERTS };
+  if (mode === 'local') return { ...lsGet(LS_ALERTS, { ...EMPTY_ALERTS }), telegramLinked: false }; // local/open mode has no per-user bot chat to link
+  return { ...EMPTY_ALERTS, telegramLinked: false };
+}
+
+// requestTelegramLink() -> { code, expiresAt, botUsername } | throws
+export async function requestTelegramLink() {
+  const res = await api('/api/alerts/telegram/link', { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not start Telegram linking');
+  return d;
+}
+
+// unlinkTelegram() -> true | throws
+export async function unlinkTelegram() {
+  const res = await api('/api/alerts/telegram/unlink', { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not unlink Telegram');
+  return true;
 }
 
 export async function saveAlertPrefs(mode, prefs) {

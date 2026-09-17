@@ -1,6 +1,6 @@
 import { normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
-import { alertDeliveryReady, outcomeDeliveryReady } from './schemaFlags.js';
-import { deliverEmail } from './notify.js';
+import { alertDeliveryReady, outcomeDeliveryReady, telegramLinkReady } from './schemaFlags.js';
+import { deliverEmail, deliverTelegramDM } from './notify.js';
 import { listUserEmailMap } from './userDirectory.js';
 import { logEvent } from './events.js';
 
@@ -189,13 +189,16 @@ export async function deliverSignalAlerts(supabase, { scanId, exchange } = {}) {
     if (!userIds.size) return;
 
     // 3. Alert prefs for the involved users (a missing row reads as all-false).
+    // telegram_chat_id is selected only when the column exists (schema-flag gate),
+    // so an unmigrated DB gets the byte-for-byte pre-Telegram-linking query.
+    const hasTelegramLink = await telegramLinkReady();
     const { data: prefRows } = await supabase
       .from('alert_prefs')
-      .select('user_id, channels, thresholds')
+      .select(hasTelegramLink ? 'user_id, channels, thresholds, telegram_chat_id' : 'user_id, channels, thresholds')
       .in('user_id', [...userIds]);
     const prefsByUser = new Map();
     for (const p of prefRows || []) {
-      prefsByUser.set(p.user_id, { channels: p.channels || {}, thresholds: p.thresholds || {} });
+      prefsByUser.set(p.user_id, { channels: p.channels || {}, thresholds: p.thresholds || {}, telegramChatId: p.telegram_chat_id || null });
     }
 
     // 4. Existing delivery cursors for the involved (user, exchange, symbol) tuples.
@@ -217,13 +220,17 @@ export async function deliverSignalAlerts(supabase, { scanId, exchange } = {}) {
       exchange: ex,
     });
 
-    // 6. Group events by user; only users whose EMAIL channel is on get delivered.
+    // 6. Group events by user; only users with AT LEAST ONE deliverable channel on
+    // (email, or telegram enabled + actually linked) get carried forward.
     const eventsByUser = new Map();
     for (const e of events) {
       if (!eventsByUser.has(e.user_id)) eventsByUser.set(e.user_id, []);
       eventsByUser.get(e.user_id).push(e);
     }
-    let deliverable = [...eventsByUser.entries()].filter(([uid]) => !!prefsByUser.get(uid)?.channels?.email);
+    let deliverable = [...eventsByUser.entries()].filter(([uid]) => {
+      const p = prefsByUser.get(uid);
+      return !!p?.channels?.email || !!(p?.channels?.telegram && p?.telegramChatId);
+    });
 
     // Cap the inline fan-out to protect the 60s budget.
     if (deliverable.length > MAX_INLINE_ALERT_SENDS) {
@@ -236,18 +243,40 @@ export async function deliverSignalAlerts(supabase, { scanId, exchange } = {}) {
       deliverable = deliverable.slice(0, MAX_INLINE_ALERT_SENDS);
     }
 
-    // 7. Resolve emails + send ONE aggregated email per user (each in its own try/catch).
-    const sentKeys = new Set(); // cursor keys we actually emailed -> stamp sent_at
+    // 7. Resolve emails + send ONE aggregated message per user per enabled channel
+    // (each channel attempt in its own try/catch — an email failure must never
+    // block that same user's Telegram DM or vice versa).
+    const sentKeys = new Set(); // cursor keys delivered on AT LEAST ONE channel -> stamp sent_at
     if (deliverable.length) {
       const emailMap = await listUserEmailMap(supabase);
       const nowIso = new Date().toISOString();
       for (const [uid, userEvents] of deliverable) {
-        try {
-          const to = emailMap.get(uid);
-          if (!to) continue; // couldn't resolve an address -> skip (email never logged)
-          const { subject, text } = formatUserAlert(to, userEvents, ex);
-          const sent = await deliverEmail({ to, subject, text });
-          if (!sent) continue; // channel off (no RESEND_API_KEY) -> no-op, cursor still advances
+        const prefs = prefsByUser.get(uid);
+        const { subject, text } = formatUserAlert(null, userEvents, ex);
+        let delivered = false;
+
+        if (prefs?.channels?.email) {
+          try {
+            const to = emailMap.get(uid);
+            if (to) {
+              const sent = await deliverEmail({ to, subject, text });
+              if (sent) delivered = true;
+            }
+          } catch (err) {
+            console.error(`per-user email delivery failed (user_id ${uid}):`, err?.message || err);
+          }
+        }
+
+        if (prefs?.channels?.telegram && prefs?.telegramChatId) {
+          try {
+            const sent = await deliverTelegramDM({ chatId: prefs.telegramChatId, text: subject + '\n\n' + text });
+            if (sent) delivered = true;
+          } catch (err) {
+            console.error(`per-user telegram delivery failed (user_id ${uid}):`, err?.message || err);
+          }
+        }
+
+        if (delivered) {
           for (const e of userEvents) sentKeys.add(cursorKey(uid, ex, e.symbol));
           await logEvent(supabase, {
             scanId,
@@ -255,8 +284,6 @@ export async function deliverSignalAlerts(supabase, { scanId, exchange } = {}) {
             message: `watchlist alert delivered — ${userEvents.length} symbol${userEvents.length === 1 ? '' : 's'}`,
             data: { user_id: uid, exchange: ex, count: userEvents.length },
           });
-        } catch (err) {
-          console.error(`per-user alert delivery failed (user_id ${uid}):`, err?.message || err);
         }
       }
       if (sentKeys.size) {
@@ -301,17 +328,20 @@ export async function deliverOutcomeAlert(supabase, { sig, outcome, exitPrice, l
     const userIds = [...new Set((wlRows || []).map((w) => w.user_id).filter(Boolean))];
     if (!userIds.length) return;
 
-    // Their prefs — respect the EMAIL channel + onBuy/onSell per the signal's direction.
+    // Their prefs — respect onBuy/onSell per the signal's direction, on whichever
+    // channel(s) they've enabled (email, or telegram enabled + actually linked).
+    const hasTelegramLink = await telegramLinkReady();
     const { data: prefRows } = await supabase
       .from('alert_prefs')
-      .select('user_id, channels, thresholds')
+      .select(hasTelegramLink ? 'user_id, channels, thresholds, telegram_chat_id' : 'user_id, channels, thresholds')
       .in('user_id', userIds);
     const prefsByUser = new Map();
     for (const p of prefRows || []) prefsByUser.set(p.user_id, p);
     const wantKey = direction === 'SELL' ? 'onSell' : 'onBuy';
     const interested = userIds.filter((uid) => {
       const p = prefsByUser.get(uid);
-      return !!(p?.channels?.email && p?.thresholds?.[wantKey]);
+      if (!p?.thresholds?.[wantKey]) return false;
+      return !!p?.channels?.email || !!(p?.channels?.telegram && p?.telegram_chat_id);
     });
     if (!interested.length) return;
 
@@ -331,14 +361,31 @@ export async function deliverOutcomeAlert(supabase, { sig, outcome, exitPrice, l
 
     const ledger = [];
     for (const uid of targets) {
-      try {
-        const to = emailMap.get(uid);
-        if (!to) continue;
-        const sent = await deliverEmail({ to, subject, text });
-        if (sent) ledger.push({ user_id: uid, signal_id: sig.id, sent_at: nowIso });
-      } catch (err) {
-        console.error(`per-user outcome alert failed (user_id ${uid}):`, err?.message || err);
+      const p = prefsByUser.get(uid);
+      let delivered = false;
+
+      if (p?.channels?.email) {
+        try {
+          const to = emailMap.get(uid);
+          if (to) {
+            const sent = await deliverEmail({ to, subject, text });
+            if (sent) delivered = true;
+          }
+        } catch (err) {
+          console.error(`per-user outcome email failed (user_id ${uid}):`, err?.message || err);
+        }
       }
+
+      if (p?.channels?.telegram && p?.telegram_chat_id) {
+        try {
+          const sent = await deliverTelegramDM({ chatId: p.telegram_chat_id, text: subject + '\n\n' + text });
+          if (sent) delivered = true;
+        } catch (err) {
+          console.error(`per-user outcome telegram failed (user_id ${uid}):`, err?.message || err);
+        }
+      }
+
+      if (delivered) ledger.push({ user_id: uid, signal_id: sig.id, sent_at: nowIso });
     }
     if (ledger.length) {
       await supabase.from('outcome_deliveries').upsert(ledger, { onConflict: 'user_id,signal_id' });
