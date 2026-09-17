@@ -15,6 +15,10 @@ import useBreakpoint from '@/hooks/useBreakpoint';
 import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 import { maskEmail, asOfLabel, channelNeedsSetup } from '@/lib/format';
 import { previewOrder, isWholeQty } from '@/lib/paperTrade';
+import { color as dsColor, spacing as dsSpacing, radius as dsRadius, font as dsFont, text as dsText } from '@/design-system/tokens';
+import StatusPill from '@/design-system/components/StatusPill';
+import Pill from '@/design-system/components/Pill';
+import SectionCard from '@/design-system/components/SectionCard';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -209,6 +213,183 @@ function SegBtn(props) {
 function fmtRate(frac) { return Math.round(Number(frac) * 100) + '%'; }
 function fmtRet(pct) { const n = Number(pct); return (n >= 0 ? '+' : '') + (Math.round(n * 100) / 100) + '%'; }
 
+// -----------------------------------------------------------------------------
+// Today-screen presentational pieces (UI/UX redesign, Phase 3 — docs/
+// NEPSE_INTELLIGENCE_V2_DISCOVERY.md). Built on the design tokens + the existing
+// card()/btn()/sbox()/SectionHeader/SegBtn helpers above, not a parallel system.
+// Every field rendered here comes from state already loaded elsewhere in
+// NepseApp — no new fetches, no invented numbers (see the discovery doc §4).
+// -----------------------------------------------------------------------------
+
+// Data-freshness indicator for a market/price timestamp. > 30 min old reads as
+// stale (matches the "correctness is the gate, freshness is metadata" guardrail —
+// this never hides or blocks stale data, only labels it honestly).
+function FreshnessPill(props) {
+  if (!props.asOf) return null;
+  var ageMin = Math.floor((Date.now() - new Date(props.asOf).getTime()) / 60000);
+  var stale = ageMin > 30;
+  return (
+    <StatusPill tone={stale ? dsColor.warning : dsColor.positive}>
+      {(stale ? 'STALE' : 'VERIFIED') + ' · updated ' + timeAgo(props.asOf) + ' ago'}
+    </StatusPill>
+  );
+}
+
+// Hero market snapshot — index, change%, sentiment, turnover, freshness. Every
+// field is optional and rendered only when present (no fabricated advancers/
+// decliners/volume — the scan chain does not compute those; see discovery doc §4).
+function MarketHero(props) {
+  var m = props.market;
+  var pos = m && m.change_pct >= 0;
+  return (
+    <div style={{ background: dsColor.surface, border: '1px solid ' + dsColor.border, borderRadius: dsRadius.lg, padding: '16px 20px', display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center', marginBottom: dsSpacing.md }}>
+      <div>
+        <div style={{ fontSize: dsText.caption, color: dsColor.textGhost, letterSpacing: '.08em', marginBottom: 4, fontFamily: dsFont.ui }}>{(props.exchangeLabel || 'MARKET') + ' INDEX'}</div>
+        {m && m.index != null ? (
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <span style={{ fontSize: dsText.hero, fontWeight: 700, color: dsColor.textPrimary, fontFamily: dsFont.mono }}>{m.index}</span>
+            <span style={{ fontSize: dsText.base, fontWeight: 600, color: pos ? dsColor.positive : dsColor.negative, fontFamily: dsFont.mono }}>{toPct(m.change_pct)}</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: dsText.body, color: dsColor.textFaint }}>{props.running ? 'Fetching market…' : 'No market reading yet'}</div>
+        )}
+      </div>
+      {m && m.sentiment && (
+        <StatusPill tone={dsColor.sentiment[m.sentiment] || dsColor.muted}><Term k={m.sentiment}>{m.sentiment}</Term></StatusPill>
+      )}
+      {m && m.turnover != null && (
+        <div>{sbox('turnover', 'Rs ' + Number(m.turnover).toLocaleString('en-IN'), dsColor.textSecondary)}</div>
+      )}
+      <div style={{ marginLeft: 'auto' }}><FreshnessPill asOf={props.asOf} /></div>
+    </div>
+  );
+}
+
+// Gainers/Losers switcher (no "Most Active" tab — the scan chain doesn't produce
+// that ranking; see discovery doc §4).
+function MoversCard(props) {
+  var [view, setView] = useState('gainers');
+  var list = (props.market && props.market[view]) || [];
+  var up = view === 'gainers';
+  return (
+    <div style={card()}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: dsSpacing.sm }}>
+        <SectionHeader title="Top Movers" mb={0} />
+        <SegBtn value={view} onChange={setView} options={[['gainers', 'Gainers'], ['losers', 'Losers']]} />
+      </div>
+      {list.length === 0 ? (
+        <div style={{ fontSize: dsText.small, color: dsColor.textFaint, padding: '8px 0' }}>{'No ' + view + ' yet.'}</div>
+      ) : list.slice(0, 5).map(function (g, i) {
+        return (
+          <div key={g.symbol || i} onClick={function () { props.onOpen(g.symbol); }} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: i ? '1px solid ' + dsColor.borderSubtle : 'none', cursor: 'pointer' }}>
+            <span style={{ color: dsColor.textPrimary, fontSize: dsText.base, fontWeight: 500, fontFamily: dsFont.mono }}>{g.symbol}</span>
+            <span style={{ fontSize: dsText.small, color: up ? dsColor.positive : dsColor.negative, fontFamily: dsFont.mono }}>{(up ? '+' : '') + (g.pct || 0).toFixed(1) + '%'}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Today's signal mix, computed client-side from the already-loaded signals array
+// (no new fetch). "resolved" reads the outcome field the signals API already sends.
+function SignalActivityCard(props) {
+  var total = props.signals.length;
+  var buyCount = props.signals.filter(function (s) { return s.signal === 'BUY'; }).length;
+  var resolved = props.signals.filter(function (s) { return s.outcome && s.outcome !== 'PENDING'; }).length;
+  return (
+    <div style={card()}>
+      <SectionHeader title="Signal Activity" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: dsSpacing.sm, marginBottom: dsSpacing.sm }}>
+        {sbox('signals today', String(total))}
+        {sbox('buy reads', String(buyCount), dsColor.positive)}
+        {sbox('resolved', String(resolved))}
+      </div>
+      <div style={{ fontSize: dsText.small, color: dsColor.textFaint }}>
+        {props.lastScanAt ? 'Last scan ' + timeAgo(props.lastScanAt) + ' ago' : 'No scan yet'}
+      </div>
+    </div>
+  );
+}
+
+// Scan progress — reuses the same running/stalled/progress state as the header
+// banners, just presented as a card with a real progress bar.
+function ScanStatusCard(props) {
+  var st = props.status;
+  var pct = st && st.total ? Math.round(((st.completed || 0) / st.total) * 100) : 0;
+  return (
+    <div style={card(props.running ? dsColor.warning : dsColor.border)}>
+      <SectionHeader title="Scan Status" />
+      {props.running ? (
+        <>
+          <div style={{ fontSize: dsText.small, color: dsColor.textFaint, marginBottom: 6 }}>{props.scanSym ? 'Analyzing ' + props.scanSym + '…' : 'Scanning…'}</div>
+          <div style={{ height: 6, background: dsColor.borderSubtle, borderRadius: 3, overflow: 'hidden', marginBottom: 6 }}>
+            <div style={{ height: '100%', width: pct + '%', background: props.stalled ? dsColor.negative : dsColor.info }} />
+          </div>
+          <div style={{ fontSize: dsText.caption, color: dsColor.textGhost, fontFamily: dsFont.mono }}>{(st.completed || 0) + ' / ' + (st.total || 0)}{props.stalled ? ' — stalled' : ''}</div>
+        </>
+      ) : (
+        <div style={{ fontSize: dsText.small, color: dsColor.textFaint }}>
+          {st && st.last_scan_at ? 'Last scan ' + timeAgo(st.last_scan_at) + ' ago' : 'No scans yet'}
+          {st && st.next_scheduled && <div style={{ marginTop: 4, fontSize: dsText.caption, color: dsColor.textGhost }}>{'Next ' + new Date(st.next_scheduled).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Compact watchlist preview for Today — full management stays on the Watch tab.
+function WatchlistMiniCard(props) {
+  var rows = props.watchlist.slice(0, 6);
+  return (
+    <div style={card()}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: dsSpacing.sm }}>
+        <SectionHeader title="Your Watchlist" mb={0} />
+        <button onClick={props.onManage} style={{ background: 'none', border: 'none', color: dsColor.info, fontSize: dsText.small, cursor: 'pointer', fontFamily: dsFont.ui }}>manage →</button>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: dsText.small, color: dsColor.textFaint }}>Nothing watched yet.</div>
+      ) : rows.map(function (sym) {
+        var sig = props.signals.find(function (s) { return s.symbol === sym; });
+        var sc = sig ? dsColor.signal[sig.signal] : null;
+        return (
+          <div key={sym} onClick={function () { props.onOpen(sym); }} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: '1px solid ' + dsColor.borderSubtle, cursor: 'pointer' }}>
+            <span style={{ fontSize: dsText.base, color: dsColor.textPrimary, fontFamily: dsFont.mono }}>{sym}</span>
+            {sig ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: dsText.caption, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 6px', borderRadius: 3 }}>{sig.signal}</span>
+                {sig.price != null && <span style={{ fontSize: dsText.small, color: dsColor.textMuted, fontFamily: dsFont.mono }}>{'Rs' + sig.price}</span>}
+              </div>
+            ) : <span style={{ fontSize: dsText.caption, color: dsColor.textGhost }}>no signal yet</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Navigation shortcuts — every action is a plain tab switch, nothing new.
+function QuickActions(props) {
+  var items = [
+    { label: 'View all signals', sub: 'See every AI read', onClick: function () { props.setTab('signals'); } },
+    { label: 'Manage watchlist', sub: 'Track your favourite stocks', onClick: function () { props.setTab('watchlist'); } },
+    { label: 'Practice in Paper', sub: 'Trade with virtual money', onClick: function () { props.setTab('paper'); } },
+    { label: 'View track record', sub: 'See past performance', onClick: function () { props.setTab('track'); } },
+  ];
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: dsSpacing.sm }}>
+      {items.map(function (it, i) {
+        return (
+          <button key={i} onClick={it.onClick} style={{ textAlign: 'left', background: dsColor.surface, border: '1px solid ' + dsColor.border, borderRadius: dsRadius.md, padding: '10px 12px', cursor: 'pointer' }}>
+            <div style={{ fontSize: dsText.body, color: dsColor.textPrimary, fontFamily: dsFont.ui, fontWeight: 500 }}>{it.label}</div>
+            <div style={{ fontSize: dsText.caption, color: dsColor.textFaint, marginTop: 2 }}>{it.sub}</div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function NepseApp() {
   const [tab, setTab] = useState('today');
   const [exchange, setExchange] = useState(DEFAULT_EXCHANGE);
@@ -266,6 +447,8 @@ export default function NepseApp() {
   // UI misc
   const [wlInput, setWlInput] = useState('');
   const [sysWlInput, setSysWlInput] = useState(''); // admin: add-to-curated-list input
+  const [sigFilter, setSigFilter] = useState('ALL'); // Signals workspace: BUY/SELL/HOLD/AVOID chip filter
+  const [sigSearch, setSigSearch] = useState(''); // Signals workspace: symbol search
   const [toasts, setToasts] = useState([]);
   const [logs, setLogs] = useState([]); // ephemeral local notices
   const [showLog, setShowLog] = useState(false);
@@ -282,6 +465,13 @@ export default function NepseApp() {
   var realisedPL = closedSells.reduce(function (s, t) { return s + (t.npl || 0); }, 0);
   var buySigCount = signals.filter(function (s) { return s.signal === 'BUY'; }).length;
   var noSLCount = openPos.filter(function (p) { return !p.sl && daysAgo(p.date) > 3; }).length;
+  // Signals workspace: client-side filter/search over the already-loaded signals —
+  // no new fetch, matches the "signals are a view over shared state" pattern.
+  var filteredSignals = signals.filter(function (s) {
+    if (sigFilter !== 'ALL' && s.signal !== sigFilter) return false;
+    if (sigSearch && s.symbol.toUpperCase().indexOf(sigSearch.toUpperCase()) === -1) return false;
+    return true;
+  });
   var alerts = openPos.reduce(function (arr, p) {
     var live = stockCache[p.symbol];
     var sigLive = signals.find(function (s) { return s.symbol === p.symbol && s.live; });
@@ -354,6 +544,7 @@ export default function NepseApp() {
   // when signed in.
   function saveExchange(ex) {
     setExchange(ex);
+    setTrack(null); // force a re-fetch scoped to the new exchange (see loadTrack)
     store.deviceSet('ni:exchange', ex);
     if (currentMode() === 'api') store.savePersonalSettings('api', { exchange: ex });
   }
@@ -404,11 +595,11 @@ export default function NepseApp() {
 
   const loadTrack = useCallback(async () => {
     try {
-      const res = await fetch('/api/track-record', { cache: 'no-store' });
+      const res = await fetch('/api/track-record?exchange=' + encodeURIComponent(exchange), { cache: 'no-store' });
       const data = await res.json();
       if (data && data.overall) setTrack(data);
     } catch (err) { console.error('track-record load failed:', err); }
-  }, []);
+  }, [exchange]);
 
   // Reload the user's own positions (per-user table in 'api', localStorage in 'local',
   // empty when signed out). tradeLog is derived from the closed rows.
@@ -416,11 +607,11 @@ export default function NepseApp() {
     const mode = !auth.configured ? 'local' : (auth.signedIn ? 'api' : 'gated');
     if (mode === 'gated') { setPortfolio([]); setTradeLog([]); return; }
     try {
-      const rows = await store.loadPortfolio(mode);
+      const rows = await store.loadPortfolio(mode, exchange);
       setPortfolio(rows.map(posFromRow));
       setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
     } catch (err) { console.error('portfolio load failed:', err); }
-  }, [auth.configured, auth.signedIn]);
+  }, [auth.configured, auth.signedIn, exchange]);
 
   // -- status polling ---------------------------------------------------------
   const stopPolling = useCallback(() => {
@@ -429,7 +620,7 @@ export default function NepseApp() {
 
   const pollStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/scan/status', { cache: 'no-store' });
+      const res = await fetch('/api/scan/status?exchange=' + encodeURIComponent(exchange), { cache: 'no-store' });
       const data = await res.json();
       setStatus(data);
       if (data.market) setMarket(normalizeMarket(data.market));
@@ -462,7 +653,7 @@ export default function NepseApp() {
         await Promise.all([loadSignals(), loadActivity()]);
       }
     } catch (err) { console.error('status poll failed:', err); }
-  }, [loadActivity, loadSignals, stopPolling]);
+  }, [exchange, loadActivity, loadSignals, stopPolling]);
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
@@ -544,7 +735,10 @@ export default function NepseApp() {
   useEffect(() => {
     if (exFirstRef.current) { exFirstRef.current = false; return; }
     loadSignals();
-  }, [exchange, loadSignals]);
+    // Also re-scope the scan-status header (market chip / progress) to the newly
+    // selected exchange — otherwise it keeps showing whichever exchange last polled.
+    if (!pollRef.current) pollStatus();
+  }, [exchange, loadSignals, pollStatus]);
 
   // On sign-in (api mode), pull the user's saved exchange ONCE (identity read, no
   // scan). Kept separate from the exchange-change effect to avoid a save/reload race.
@@ -572,7 +766,7 @@ export default function NepseApp() {
         const wl = await store.loadWatchlist(mode, exchange);
         if (!alive) return;
         setWatchlist(wl.symbols); setWlSources(wl.sources);
-        const rows = await store.loadPortfolio(mode);
+        const rows = await store.loadPortfolio(mode, exchange);
         if (!alive) return;
         setPortfolio(rows.map(posFromRow));
         setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
@@ -711,7 +905,7 @@ export default function NepseApp() {
 
   function openStock(sym) {
     setOvSym(sym); setOvData(null); setOvAnalysis(''); setOvSig(null); setOvLoading(true);
-    fetch('/api/stock?symbol=' + encodeURIComponent(sym), { cache: 'no-store' })
+    fetch('/api/stock?symbol=' + encodeURIComponent(sym) + '&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (res.data) {
@@ -874,15 +1068,56 @@ export default function NepseApp() {
         </div>
       )}
 
+      {/* APP BODY — left sidebar nav + right column (top bar / content). The sidebar
+          replaces the old horizontal tab strip as the primary navigation (UI/UX
+          redesign Phase 2, docs/NEPSE_INTELLIGENCE_V2_DISCOVERY.md). Desktop-only
+          fixed column; collapses to nothing on mobile, which keeps the pre-redesign
+          bottom-of-header pattern (nav folds into the top bar) rather than inventing
+          an untested mobile drawer in this pass. */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {!isMobile && (
+          <div style={{ width: 208, flexShrink: 0, background: dsColor.surfaceRaised, borderRight: '1px solid ' + dsColor.borderSubtle, display: 'flex', flexDirection: 'column', padding: '14px 10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px', marginBottom: 18 }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: running ? dsColor.warning : dsColor.positive, animation: running ? '_dot 1s ease infinite' : 'none' }} />
+              <span style={{ fontSize: dsText.title, fontWeight: 600, color: dsColor.textPrimary, letterSpacing: '-.01em', fontFamily: dsFont.ui }}>{exchange}</span>
+              <span style={{ fontSize: dsText.small, color: dsColor.textGhost, fontFamily: dsFont.ui }}>Intelligence</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+              {TABS.map(function (t) {
+                var active = tab === t.k;
+                return (
+                  <button key={t.k} onClick={function () { setTab(t.k); }} aria-current={active ? 'page' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', borderRadius: dsRadius.md, border: 'none', background: active ? dsColor.info + '18' : 'transparent', color: active ? dsColor.info : dsColor.textFaint, fontSize: dsText.base, fontWeight: active ? 600 : 400, fontFamily: dsFont.ui, cursor: 'pointer', textAlign: 'left' }}>
+                    <span style={{ flex: 1 }}>{t.label}</span>
+                    {t.k === 'signals' && buySigCount > 0 && <span style={{ fontSize: dsText.caption, padding: '1px 5px', borderRadius: 10, background: dsColor.positive + '22', color: dsColor.positive, fontFamily: dsFont.mono }}>{buySigCount}</span>}
+                    {t.k === 'positions' && noSLCount > 0 && <span style={{ fontSize: dsText.caption, padding: '1px 5px', borderRadius: 10, background: dsColor.negative + '22', color: dsColor.negative, fontFamily: dsFont.mono }}>!</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ borderTop: '1px solid ' + dsColor.borderSubtle, marginTop: 8, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <button onClick={function () { setTab('settings'); }} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', borderRadius: dsRadius.md, border: 'none', background: tab === 'settings' ? dsColor.info + '18' : 'transparent', color: tab === 'settings' ? dsColor.info : dsColor.textFaint, fontSize: dsText.base, fontFamily: dsFont.ui, cursor: 'pointer', textAlign: 'left' }}>Settings</button>
+              {auth.isAdmin && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 10px', fontSize: dsText.caption, color: dsColor.textGhost, fontFamily: dsFont.mono, letterSpacing: '.06em' }}>
+                  ADMIN <span style={{ padding: '1px 5px', borderRadius: 3, background: dsColor.warning + '22', color: dsColor.warning }}>ON</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+
       {/* HEADER */}
       <div style={{ background: '#07090e', borderBottom: '1px solid #141824', padding: '0 16px', flexShrink: 0 }}>
         {/* top bar */}
         <div className="app-topbar" style={{ display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid #0f1420' }}>
+          {isMobile && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 7, height: 7, borderRadius: '50%', background: running ? '#f59e0b' : '#10b981', animation: running ? '_dot 1s ease infinite' : 'none' }} />
             <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', letterSpacing: '-.01em', fontFamily: 'Inter,sans-serif' }}>{exchange}</span>
             <span style={{ fontSize: 10, color: '#2a3550', fontFamily: 'Inter,sans-serif' }}>Intelligence</span>
           </div>
+          )}
           {market ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'IBM Plex Mono,monospace' }}>{market.index}</span>
@@ -917,27 +1152,22 @@ export default function NepseApp() {
             )}
           </div>
         </div>
-        {/* nav bar */}
+        {/* nav bar — primary navigation lives in the left sidebar (desktop) or the
+            fixed bottom nav (mobile, rendered near the end of this component); this
+            row is just Settings + Ask on mobile, a spacer + Ask on desktop. */}
         <div className="app-nav" style={{ display: 'flex', alignItems: 'center' }}>
-          <div className="nav-tabs" style={{ display: 'flex', flex: 1, gap: 0 }}>
-            {TABS.map(function (t) {
-              var active = tab === t.k;
-              return (
-                <button key={t.k} onClick={function () { setTab(t.k); }} style={{ padding: '0 14px', height: 38, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, fontWeight: active ? 500 : 400, fontFamily: 'Inter,sans-serif', color: active ? '#e2e8f0' : '#4a5568', borderBottom: active ? '2px solid #3b82f6' : '2px solid transparent', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5 }}>
-                  {t.label}
-                  {t.k === 'signals' && buySigCount > 0 && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 10, background: '#10b98122', color: '#10b981', fontFamily: 'IBM Plex Mono,monospace' }}>{buySigCount}</span>}
-                  {t.k === 'positions' && noSLCount > 0 && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 10, background: '#ef444422', color: '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>!</span>}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ width: 1, height: 20, background: '#1e2840', margin: '0 6px' }} />
-          <button onClick={function () { setTab('settings'); }} title="Settings" style={{ padding: '0 10px', height: 38, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: tab === 'settings' ? '2px solid #3b82f6' : '2px solid transparent' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={tab === 'settings' ? '#e2e8f0' : '#4a5568'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
+          <div style={{ flex: 1 }} />
+          {isMobile && (
+            <>
+              <div style={{ width: 1, height: 20, background: '#1e2840', margin: '0 6px' }} />
+              <button onClick={function () { setTab('settings'); }} title="Settings" aria-label="Settings" style={{ padding: '0 10px', height: 38, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: tab === 'settings' ? '2px solid #3b82f6' : '2px solid transparent' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={tab === 'settings' ? '#e2e8f0' : '#4a5568'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+            </>
+          )}
           <button onClick={function () { setSidebarOpen(function (v) { return !v; }); }} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px', height: 34, border: '1px solid ' + (sidebarOpen ? '#3b82f6' : '#1e2840'), borderRadius: 7, background: sidebarOpen ? '#3b82f610' : 'transparent', cursor: 'pointer', marginLeft: 4 }}>
             <span style={{ fontSize: 11, color: sidebarOpen ? '#3b82f6' : '#4a5568', fontFamily: 'Inter,sans-serif', fontWeight: 500 }}>Ask</span>
             <span style={{ fontSize: 10, color: sidebarOpen ? '#3b82f6' : '#2a3550' }}>{sidebarOpen ? 'x' : ''}</span>
@@ -1026,8 +1256,9 @@ export default function NepseApp() {
       {/* MAIN LAYOUT */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-        {/* main content */}
-        <div className="app-content" style={{ flex: 1, overflowY: 'auto' }}>
+        {/* main content — extra bottom padding on mobile so the fixed bottom nav
+            (below) never covers the last card. */}
+        <div className="app-content" style={{ flex: 1, overflowY: 'auto', paddingBottom: isMobile ? 'calc(56px + env(safe-area-inset-bottom, 0px))' : 0 }}>
 
           {/* TODAY */}
           {tab === 'today' && (
@@ -1049,31 +1280,54 @@ export default function NepseApp() {
                   })}
                 </div>
               )}
-              {brief ? (
-                <div style={card(brief.mood === 'POSITIVE' ? '#10b981' : brief.mood === 'CAUTIOUS' ? '#f59e0b' : '#1c2333')}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', marginBottom: 6, lineHeight: 1.4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{brief.headline}</div>
-                  {(brief.market_note || brief.summary) && <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 3, fontFamily: 'IBM Plex Sans,sans-serif', lineHeight: 1.6 }}>{brief.market_note || brief.summary}</div>}
-                  {brief.portfolio_flag && <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 3 }}>! {brief.portfolio_flag}</div>}
-                  {Array.isArray(brief.topPicks) && brief.topPicks.length > 0 && <div style={{ fontSize: 11, color: '#10b981', marginBottom: 3 }}>top picks: {brief.topPicks.join(', ')}</div>}
-                  {brief.top_action && <div style={{ fontSize: 11, color: '#3b82f6' }}>-&gt; {brief.top_action}</div>}
-                  {brief.risks && <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>risk: {brief.risks}</div>}
+              <MarketHero market={market} running={running} exchangeLabel={exchange} asOf={status && status.market_as_of} />
+
+              <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3,1fr)', gap: dsSpacing.md, marginBottom: dsSpacing.md }}>
+                <MoversCard market={market} onOpen={openStock} />
+                <SignalActivityCard signals={signals} lastScanAt={status && status.last_scan_at} />
+                <ScanStatusCard status={status} running={running} scanSym={scanSym} stalled={stalled} />
+              </div>
+
+              <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr', gap: dsSpacing.md, marginBottom: dsSpacing.md, alignItems: 'start' }}>
+                <div>
+                  {brief ? (
+                    <div style={card(brief.mood === 'POSITIVE' ? '#10b981' : brief.mood === 'CAUTIOUS' ? '#f59e0b' : '#1c2333')}>
+                      <SectionHeader title="AI Daily Brief" mb={8} />
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', marginBottom: 6, lineHeight: 1.4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{brief.headline}</div>
+                      {(brief.market_note || brief.summary) && <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 3, fontFamily: 'IBM Plex Sans,sans-serif', lineHeight: 1.6 }}>{brief.market_note || brief.summary}</div>}
+                      {brief.portfolio_flag && <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 3 }}>! {brief.portfolio_flag}</div>}
+                      {Array.isArray(brief.topPicks) && brief.topPicks.length > 0 && <div style={{ fontSize: 11, color: '#10b981', marginBottom: 3 }}>top picks: {brief.topPicks.join(', ')}</div>}
+                      {brief.top_action && <div style={{ fontSize: 11, color: '#3b82f6' }}>-&gt; {brief.top_action}</div>}
+                      {brief.risks && <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>risk: {brief.risks}</div>}
+                    </div>
+                  ) : running ? (
+                    <div style={card()}>
+                      <SectionHeader title="AI Daily Brief" mb={8} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', animation: '_dot 1s ease infinite' }} />
+                        <span style={{ fontSize: 10, color: '#4a5568' }}>{scanPhase === 'market' ? 'fetching ' + exchange + ' market...' : scanSym ? 'scanning ' + scanSym : 'scan in progress...'}</span>
+                      </div>
+                      {ghost(55)}{ghost(75)}{ghost(40)}
+                    </div>
+                  ) : (
+                    <div style={card()}>
+                      <SectionHeader title="AI Daily Brief" mb={8} />
+                      <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 8 }}>
+                        {'No brief yet — here is what the verified data currently shows.'}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginBottom: 8 }}>
+                        {sbox('signals', String(signals.length))}
+                        {sbox('buy reads', String(buySigCount), '#10b981')}
+                        {market && market.sentiment ? sbox('sentiment', market.sentiment, dsColor.sentiment[market.sentiment]) : sbox('sentiment', '-')}
+                      </div>
+                      {auth.isAdmin
+                        ? <button onClick={scanNow} style={btn('#3b82f6')}>run scan now</button>
+                        : <div style={{ fontSize: 10, color: '#4a5568' }}>The agent scans on a schedule — the brief appears here.</div>}
+                    </div>
+                  )}
                 </div>
-              ) : running ? (
-                <div style={card()}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                    <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', animation: '_dot 1s ease infinite' }} />
-                    <span style={{ fontSize: 10, color: '#4a5568' }}>{scanPhase === 'market' ? 'fetching NEPSE market...' : scanSym ? 'scanning ' + scanSym : 'scan in progress...'}</span>
-                  </div>
-                  {ghost(55)}{ghost(75)}{ghost(40)}
-                </div>
-              ) : (
-                <div style={card()}>
-                  <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 8 }}>No brief yet.</div>
-                  {auth.isAdmin
-                    ? <button onClick={scanNow} style={btn('#3b82f6')}>run scan now</button>
-                    : <div style={{ fontSize: 10, color: '#4a5568' }}>The agent scans on a schedule — the brief appears here.</div>}
-                </div>
-              )}
+                <WatchlistMiniCard watchlist={watchlist} signals={signals} onOpen={openStock} onManage={function () { setTab('watchlist'); }} />
+              </div>
 
               {/* discovered-today banner */}
               {signals.filter(function (s) { return s.source === 'discovered'; }).length > 0 && (
@@ -1094,29 +1348,7 @@ export default function NepseApp() {
                 </div>
               )}
 
-              {/* market movers */}
-              {market && (market.gainers || []).length > 0 && (
-                <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                  <div style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 8, padding: '10px 12px' }}>
-                    <div style={{ fontSize: 9, color: '#10b981', letterSpacing: '.08em', marginBottom: 6 }}>GAINERS</div>
-                    {(market.gainers || []).slice(0, 4).map(function (g, i) {
-                      return <div key={i} onClick={function () { openStock(g.symbol); }} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderTop: '1px solid #1c2333', cursor: 'pointer' }}>
-                        <span style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 500 }}>{g.symbol}</span>
-                        <span style={{ fontSize: 10, color: '#10b981' }}>{'+' + (g.pct || 0).toFixed(1) + '%'}</span>
-                      </div>;
-                    })}
-                  </div>
-                  <div style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 8, padding: '10px 12px' }}>
-                    <div style={{ fontSize: 9, color: '#ef4444', letterSpacing: '.08em', marginBottom: 6 }}>LOSERS</div>
-                    {(market.losers || []).slice(0, 4).map(function (g, i) {
-                      return <div key={i} onClick={function () { openStock(g.symbol); }} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderTop: '1px solid #1c2333', cursor: 'pointer' }}>
-                        <span style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 500 }}>{g.symbol}</span>
-                        <span style={{ fontSize: 10, color: '#ef4444' }}>{(g.pct || 0).toFixed(1) + '%'}</span>
-                      </div>;
-                    })}
-                  </div>
-                </div>
-              )}
+              {signals.length > 0 && <SectionHeader title="Priority Reads" sub="Today's highest-conviction signals" />}
 
               {/* top buy signals */}
               {signals.filter(function (s) { return s.signal === 'BUY'; }).slice(0, 3).map(function (s) {
@@ -1160,12 +1392,18 @@ export default function NepseApp() {
                   )}
                 </div>
               )}
+
+              <div style={{ marginTop: dsSpacing.lg }}>
+                <SectionHeader title="Quick Actions" />
+                <QuickActions setTab={setTab} />
+              </div>
             </div>
           )}
 
           {/* POSITIONS */}
           {tab === 'positions' && (
             <div>
+              <SectionHeader title="My Positions" sub="your own record — not agent output" />
               {openPos.length > 0 && (
                 <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
                   {[['open', '' + openPos.length, null], ['deployed', toRs(openPos.reduce(function (s, p) { return s + p.net; }, 0)), null], ['realised', signed(realisedPL), realisedPL >= 0 ? '#10b981' : '#ef4444'], ['win %', closedSells.length ? Math.round(closedSells.filter(function (t) { return (t.npl || 0) > 0; }).length / closedSells.length * 100) + '%' : '-', '#3b82f6']].map(function (item) {
@@ -1255,11 +1493,22 @@ export default function NepseApp() {
             />
           )}
 
-          {/* SIGNALS */}
+          {/* SIGNALS — a research workspace: filter/search over the shared, already-
+              loaded signal set (client-side only, no new fetch per filter change). */}
           {tab === 'signals' && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <div style={{ fontSize: 10, color: '#4a5568' }}>{signals.length + ' signals - ' + signals.filter(function (s) { return s.source === 'discovered'; }).length + ' discovered'}</div>
+              <SectionHeader title="Signals" sub={signals.length + ' total · ' + signals.filter(function (s) { return s.source === 'discovered'; }).length + ' discovered'} />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: dsSpacing.md }}>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {['ALL', 'BUY', 'SELL', 'HOLD', 'AVOID'].map(function (f) {
+                    var active = sigFilter === f;
+                    var fc = f === 'ALL' ? dsColor.info : (dsColor.signal[f] || dsColor.muted);
+                    return (
+                      <button key={f} onClick={function () { setSigFilter(f); }} style={{ padding: '5px 12px', borderRadius: dsRadius.pill, border: '1px solid ' + (active ? fc : dsColor.border), background: active ? fc + '1c' : 'transparent', color: active ? fc : dsColor.textFaint, fontSize: dsText.small, fontWeight: active ? 600 : 400, cursor: 'pointer', fontFamily: dsFont.ui }}>{f}</button>
+                    );
+                  })}
+                </div>
+                <input value={sigSearch} onChange={function (e) { setSigSearch(e.target.value); }} placeholder="Search symbol…" style={{ flex: '1 1 140px', minWidth: 120, fontSize: dsText.small, padding: '6px 10px', borderRadius: dsRadius.md, border: '1px solid ' + dsColor.border, background: dsColor.surface, color: dsColor.textPrimary, fontFamily: dsFont.mono }} />
                 {auth.isAdmin && <button onClick={scanNow} disabled={running || scanStarting} style={btn('#3b82f6')}>{running ? 'scanning...' : 'fresh scan'}</button>}
               </div>
               {signals.length === 0 && (
@@ -1270,7 +1519,15 @@ export default function NepseApp() {
                     : 'The agent scans on a schedule — new signals appear here.'}
                 </div>
               )}
-              {signals.map(function (s) {
+              {signals.length > 0 && filteredSignals.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '40px 20px', color: dsColor.textFaint, fontSize: dsText.body }}>
+                  {'No signals match ' + (sigFilter !== 'ALL' ? sigFilter : '') + (sigSearch ? ' "' + sigSearch + '"' : '') + '.'}
+                  <div style={{ marginTop: 8 }}>
+                    <button onClick={function () { setSigFilter('ALL'); setSigSearch(''); }} style={btn('#3b82f6')}>clear filters</button>
+                  </div>
+                </div>
+              )}
+              {filteredSignals.map(function (s) {
                 var sc = SIG_COLORS[s.signal] || '#4a5568'; var d = s.live;
                 var isHeld = openPos.find(function (p) { return p.symbol === s.symbol; });
                 return (
@@ -1322,11 +1579,8 @@ export default function NepseApp() {
           {tab === 'track' && (
             <div className="fadeup">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Track Record</div>
-                  <div style={{ fontSize: 10, color: '#4a5568' }}>The agent&apos;s real, verified WIN/LOSS history — losses included. Past performance ≠ future results.</div>
-                </div>
-                <button onClick={loadTrack} style={{ fontSize: 9, color: '#2a3550', background: 'none', border: '1px solid #1e2840', borderRadius: 3, padding: '3px 8px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>refresh</button>
+                <SectionHeader title="Track Record" sub="real, verified WIN/LOSS history — losses included. Past performance ≠ future results." mb={0} />
+                <button onClick={loadTrack} style={{ fontSize: 9, color: '#2a3550', background: 'none', border: '1px solid #1e2840', borderRadius: 3, padding: '3px 8px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', flexShrink: 0 }}>refresh</button>
               </div>
 
               {!track ? (
@@ -1408,8 +1662,7 @@ export default function NepseApp() {
           {/* WATCHLIST */}
           {tab === 'watchlist' && (
             <div>
-              <div style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 600, marginBottom: 4 }}>Your watchlist</div>
-              <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 12, lineHeight: 1.7 }}>{'Agent scans all ' + watchlist.length + ' stocks + ' + settings.discovery_depth + ' auto-discovered per run. Edits here are picked up by the next server scan.'}</div>
+              <SectionHeader title="Your Watchlist" sub={'Agent scans all ' + watchlist.length + ' stocks + ' + settings.discovery_depth + ' auto-discovered per run'} />
 
               {/* failed / skipped jobs with retry */}
               {(failedJobs.length > 0 || skippedJobs.length > 0) && (
@@ -1443,7 +1696,7 @@ export default function NepseApp() {
                   Admins get inline add/deactivate; everyone else sees it read-only. */}
               {(systemWatchlist.length > 0 || auth.isAdmin) && (
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 600, marginBottom: 2 }}>Curated watchlist (scanned for everyone)</div>
+                  <SectionHeader title="Curated Watchlist" sub="scanned for everyone" mb={6} />
                   <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8, lineHeight: 1.6 }}>A global list the agent monitors for all users — separate from your own watchlist above.</div>
                   {auth.isAdmin && (
                     <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
@@ -1465,7 +1718,7 @@ export default function NepseApp() {
                           <div key={'sys-' + sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
                               <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
-                              {auth.isAdmin && <button onClick={function () { curateSystemWatch('deactivate', sym); }} title="deactivate (admin)" style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>}
+                              {auth.isAdmin && <button onClick={function () { curateSystemWatch('deactivate', sym); }} title="deactivate (admin)" aria-label={'Remove ' + sym + ' from curated watchlist'} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
                               <span style={{ fontSize: 8, color: srcC }}>{row.source}</span>
@@ -1506,7 +1759,7 @@ export default function NepseApp() {
                       <div key={sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
-                          <button onClick={function () { removeFromWatchlist(sym); }} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>
+                          <button onClick={function () { removeFromWatchlist(sym); }} aria-label={'Remove ' + sym + ' from your watchlist'} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
                           <span style={{ fontSize: 8, color: srcC }}>{src}</span>
@@ -1533,14 +1786,7 @@ export default function NepseApp() {
               <SectionHeader title="Agent Settings" sub="configure how the agent scans and discovers" />
 
               {/* Exchange */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#3b82f618', border: '1px solid #3b82f633', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#3b82f6', fontFamily: 'IBM Plex Mono,monospace', fontWeight: 600 }}>ex</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Stock Exchange</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Which market are you trading</div>
-                  </div>
-                </div>
+              <SectionCard icon="ex" iconColor={dsColor.info} title="Stock Exchange" subtitle="Which market are you trading">
                 <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {Object.keys(EXCHANGES).map(function (exId) {
                     var ex = EXCHANGES[exId]; var active = exchange === exId;
@@ -1563,7 +1809,7 @@ export default function NepseApp() {
                     );
                   })}
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Account / admin sign-in (only when Google auth is configured) */}
               <AuthPanel auth={auth} />
@@ -1575,14 +1821,7 @@ export default function NepseApp() {
               {gated ? (
                 <SignInPrompt title="Sign in to set alert preferences" sub="Choose how the agent notifies you and which signals trigger an alert. Your preferences are private to your account." onSignIn={auth.signIn} />
               ) : (
-                <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f59e0b18', border: '1px solid #f59e0b33', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: '#f59e0b' }}>!</div>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>My Alerts</div>
-                      <div style={{ fontSize: 10, color: '#4a5568' }}>How the agent notifies you when a signal fires</div>
-                    </div>
-                  </div>
+                <SectionCard icon="!" iconColor={dsColor.warning} title="My Alerts" subtitle="How the agent notifies you when a signal fires">
                   {[['email', 'Email'], ['telegram', 'Telegram']].map(function (c) {
                     var chInfo = channelMap[c[0]];
                     var needsSetup = chInfo && channelNeedsSetup(!!alertPrefs.channels[c[0]], chInfo.configured);
@@ -1610,38 +1849,27 @@ export default function NepseApp() {
                       </div>
                     );
                   })}
-                </div>
+                </SectionCard>
               )}
 
-              {/* Admin-only config surfaces — hidden for non-admins; the server
-                  still enforces the boundary on the actual mutations. */}
+              {/* ADMIN ZONE — hidden for non-admins; the server independently enforces
+                  the boundary on every mutation below (this visual gate is a UX nicety,
+                  not the security boundary). Visually distinct (amber banner) from the
+                  user-facing sections above, per the redesign's admin-separation rule. */}
               {auth.isAdmin && (
-                <>
+                <div style={{ border: '1px dashed ' + dsColor.warning + '55', borderRadius: dsRadius.lg, padding: '14px 16px 4px', marginBottom: dsSpacing.md, background: dsColor.warning + '06' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: dsSpacing.md }}>
+                    <span style={{ fontSize: dsText.caption, fontWeight: 700, letterSpacing: '.08em', color: dsColor.warning, fontFamily: dsFont.mono }}>ADMIN</span>
+                    <span style={{ fontSize: dsText.small, color: dsColor.textFaint, fontFamily: dsFont.ui }}>system configuration — affects every user</span>
+                  </div>
                   {/* Data Sources */}
                   <AdminDataSources />
 
                   {/* Notifications */}
                   <AdminChannels />
-                </>
-              )}
-
-              {/* Agent/discovery config — shapes the ONE global scan, so ADMIN-only
-                  (hidden for regular users; server-enforced on /api/admin/settings).
-                  A regular user's Settings = Exchange + Account above. */}
-              {auth.isAdmin && (
-              <>
               {/* Discovery */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#10b98118', border: '1px solid #10b98133', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>@</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Auto-Discovery</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Scans NEPSE market movers, finds best signals</div>
-                  </div>
-                  <div style={{ marginLeft: 'auto' }}>
-                    <ToggleBtn on={settings.discovery_on} onClick={function () { saveSettings(Object.assign({}, settings, { discovery_on: !settings.discovery_on })); }} />
-                  </div>
-                </div>
+              <SectionCard icon="@" iconColor={dsColor.positive} title="Auto-Discovery" subtitle="Scans NEPSE market movers, finds best signals"
+                right={<div style={{ marginLeft: 'auto' }}><ToggleBtn on={settings.discovery_on} onClick={function () { saveSettings(Object.assign({}, settings, { discovery_on: !settings.discovery_on })); }} /></div>}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Discovery depth</div>
@@ -1656,20 +1884,11 @@ export default function NepseApp() {
                   </div>
                   <SegBtn value={settings.autoadd_threshold} options={[['BUY', 'BUY only'], ['BUY_WATCH', 'BUY + WATCH']]} onChange={function (v) { saveSettings(Object.assign({}, settings, { autoadd_threshold: v })); }} />
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Auto-remove */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#ef444418', border: '1px solid #ef444433', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>-</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Auto-Remove</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Removes stale stocks from watchlist automatically (inactive in this version)</div>
-                  </div>
-                  <div style={{ marginLeft: 'auto' }}>
-                    <ToggleBtn on={settings.autoremove_on} onClick={function () { saveSettings(Object.assign({}, settings, { autoremove_on: !settings.autoremove_on })); }} />
-                  </div>
-                </div>
+              <SectionCard icon="-" iconColor={dsColor.negative} title="Auto-Remove" subtitle="Removes stale stocks from watchlist automatically (inactive in this version)"
+                right={<div style={{ marginLeft: 'auto' }}><ToggleBtn on={settings.autoremove_on} onClick={function () { saveSettings(Object.assign({}, settings, { autoremove_on: !settings.autoremove_on })); }} /></div>}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Remove after N stale scans</div>
@@ -1677,17 +1896,10 @@ export default function NepseApp() {
                   </div>
                   <SegBtn value={settings.autoremove_after} options={[2, 3, 5]} onChange={function (n) { saveSettings(Object.assign({}, settings, { autoremove_after: n })); }} />
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Sector focus */}
-              <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#a78bfa18', border: '1px solid #a78bfa33', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>#</div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Sector Focus</div>
-                    <div style={{ fontSize: 10, color: '#4a5568' }}>Discovery prioritises enabled sectors. All on = no bias.</div>
-                  </div>
-                </div>
+              <SectionCard icon="#" iconColor={dsColor.discovery} title="Sector Focus" subtitle="Discovery prioritises enabled sectors. All on = no bias.">
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(148px,1fr))', gap: 8, marginTop: 12 }}>
                   {SECTORS.map(function (s) {
                     var on = settings.sector_focus[s];
@@ -1702,7 +1914,7 @@ export default function NepseApp() {
                     );
                   })}
                 </div>
-              </div>
+              </SectionCard>
 
               {/* Scan profile summary */}
               <div style={{ background: 'linear-gradient(135deg,#0b0e16 0%,#0d1220 100%)', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px' }}>
@@ -1721,7 +1933,7 @@ export default function NepseApp() {
                   Scans now run server-side (cron + manual). The agent fetches the market, discovers movers, scans each stock, then writes a brief — crash-safe and within the daily AI budget.
                 </div>
               </div>
-              </>
+                </div>
               )}
             </div>
           )}
@@ -1784,6 +1996,27 @@ export default function NepseApp() {
         )}
 
       </div>{/* end main layout */}
+
+      </div>{/* end right column */}
+      </div>{/* end app body (sidebar + right column) */}
+
+      {/* MOBILE BOTTOM NAV — the sidebar's mobile equivalent (Phase 12). Fixed,
+          safe-area-aware; app-content already reserves matching bottom padding
+          above so the last card is never hidden behind it. */}
+      {isMobile && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 250, display: 'flex', background: dsColor.surfaceRaised, borderTop: '1px solid ' + dsColor.borderSubtle, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+          {TABS.map(function (t) {
+            var active = tab === t.k;
+            return (
+              <button key={t.k} onClick={function () { setTab(t.k); }} aria-current={active ? 'page' : undefined} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '8px 1px', minHeight: 48, border: 'none', background: 'none', cursor: 'pointer', color: active ? dsColor.info : dsColor.textFaint, position: 'relative' }}>
+                <span style={{ fontSize: 8, fontWeight: active ? 600 : 400, fontFamily: dsFont.ui, textAlign: 'center', lineHeight: 1.15 }}>{t.label}</span>
+                {t.k === 'signals' && buySigCount > 0 && <span style={{ position: 'absolute', top: 2, right: '18%', width: 6, height: 6, borderRadius: '50%', background: dsColor.positive }} />}
+                {t.k === 'positions' && noSLCount > 0 && <span style={{ position: 'absolute', top: 2, right: '18%', width: 6, height: 6, borderRadius: '50%', background: dsColor.negative }} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* STOCK OVERLAY */}
       {ovSym && (

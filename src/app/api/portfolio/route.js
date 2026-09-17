@@ -25,16 +25,23 @@ function unauthorized() {
 
 const num = (v) => (v === '' || v == null || Number.isNaN(Number(v)) ? null : Number(v));
 
-// GET /api/portfolio -> { positions: [row, ...] }  (all statuses, this user only)
+// GET /api/portfolio?exchange=NEPSE -> { positions: [row, ...] }  (all statuses, this
+// user, scoped to one exchange — a NEPSE position must never render alongside a NYSE
+// one). Unlike the shared scans/signals `exchange` column (added later by migration and
+// gated on a schema-flag probe), `portfolios.exchange` was part of the table's initial
+// CREATE TABLE (20260805120000_multitenant_user_tables.sql) — the table cannot exist
+// without it, so the filter is unconditional here.
 export const GET = withGuard(async (request) => {
   const user = await getUserFromRequest(request);
   if (!user) return unauthorized();
 
+  const exchange = normalizeExchange(request.nextUrl.searchParams.get('exchange'));
   const supabase = getUserSupabase(user.token);
   const { data, error } = await supabase
     .from('portfolios')
     .select('*')
     .eq('user_id', user.id)
+    .eq('exchange', exchange)
     .order('opened_at', { ascending: false });
   if (error) throw error;
   return NextResponse.json({ positions: data || [] });
