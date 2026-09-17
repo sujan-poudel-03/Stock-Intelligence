@@ -8,23 +8,27 @@
 // screen needs it, not speculatively (CLAUDE.md: no abstractions beyond what
 // the task requires).
 
+// Neutral surfaces/borders/text are CSS variables (src/app/globals.css) so they
+// respond to the light/dark theme choice (src/hooks/useTheme.js) — see globals.css
+// for why the SEMANTIC colors below stay raw hex, constant across both themes.
 export const color = {
-  // Surfaces (darkest -> lightest)
-  canvas: '#07090e',      // app background
-  surface: '#0b0e16',     // card background
-  surfaceSunken: '#080a0f', // inset panels inside a card (quotes, code-like blocks)
-  surfaceRaised: '#0d1018', // slightly-lifted card (banners, secondary panels)
-  border: '#1e2840',      // default card/divider border
-  borderSubtle: '#141824', // quieter border (header rules, stat-box borders)
+  // Surfaces (darkest -> lightest, in the dark theme)
+  canvas: 'var(--canvas)',      // app background
+  surface: 'var(--surface)',     // card background
+  surfaceSunken: 'var(--surface-sunken)', // inset panels inside a card (quotes, code-like blocks)
+  surfaceRaised: 'var(--surface-raised)', // slightly-lifted card (banners, secondary panels)
+  border: 'var(--border-default)',      // default card/divider border
+  borderSubtle: 'var(--border-faint)', // quieter border (header rules, stat-box borders)
 
   // Text
-  textPrimary: '#e2e8f0',
-  textSecondary: '#c8d4e8',
-  textMuted: '#8899b4',
-  textFaint: '#4a5568',
-  textGhost: '#2a3550',
+  textPrimary: 'var(--text-primary)',
+  textSecondary: 'var(--text-secondary)',
+  textMuted: 'var(--text-muted)',
+  textFaint: 'var(--text-faint)',
+  textGhost: 'var(--text-ghost)',
 
-  // Semantic status (never the ONLY signal — always paired with a label/icon)
+  // Semantic status (never the ONLY signal — always paired with a label/icon).
+  // Deliberately NOT theme-dependent — constant across dark/light (see globals.css).
   positive: '#10b981', // BUY / gains / verified / target-hit
   negative: '#ef4444', // SELL / losses / stop-breach / error
   warning: '#f59e0b',  // HOLD / caution / stale / partial
