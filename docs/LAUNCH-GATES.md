@@ -116,11 +116,25 @@ is `free` until a paid tier + gateway are switched on (post-legal, post-track-re
 **Built but not fully exercised / open:**
 - ⏳ Google **OAuth button** UI (the token path is proven; the button is a manual click)
 - ⏳ **NYSE produces signals** (data-layer verified; no NYSE scan has written signals yet)
-- ⏳ Cross-source price **agreement** (only merolagani is live → single-source; needs a
-  2nd NEPSE source: implement `sharesansar` or add a `nepalstock` token)
-- ⏳ Per-user **alert delivery** (prefs stored; delivery deferred — needs per-user
-  destinations)
-- ⏳ Intraday **light** scans (empty watchlist → seed/migration needed)
+- ⏳ Cross-source price **agreement** — both `merolagani` and `sharesansar` are live,
+  tested, zero-env-config sources; only single-source is *active* today. This is a
+  config switch (`MARKET_DATA_SOURCES=merolagani,sharesansar`), not an engineering
+  gap — see `docs/OWNER-RUNBOOK.md` §4.
+- ✅ Per-user **alert delivery** — email is LIVE (watched-symbol flips + outcome
+  alerts, `RESEND_API_KEY`-gated) and per-user Telegram linking is LIVE (bot
+  `/start` flow, `docs/OWNER-RUNBOOK.md` §4). Push (web) subscription capture is
+  built; actual encrypted send is deferred — `web-push` couldn't be installed
+  (npm registry unreachable in this environment); re-check when the owner has
+  registry access.
+- ⏳ Intraday **light** scans (empty watchlist → seed/migration needed; a free
+  external scheduler can also close the once-daily cadence gap today — §4a of
+  `docs/OWNER-RUNBOOK.md`)
+- ✅ **NEPSE index benchmark** — a second, independent verified (non-LLM) index
+  reading (`merolagani.com/Indices.aspx`) now records one bar/day into
+  `price_history` and surfaces on the Track Record tab once 2+ bars exist. No
+  historical backfill (the source paginates via an ASP.NET postback, too fragile
+  to simulate) — the benchmark builds forward from whenever the migration is
+  applied.
 - ⏳ Degradation (budget-spent → deterministic) is unit-tested, not live-triggered
 - ⏳ EWMA decay counters (`dwins/dlosses`) not populating — small follow-up
 

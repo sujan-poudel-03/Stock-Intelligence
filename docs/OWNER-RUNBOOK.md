@@ -94,6 +94,29 @@ day means more LLM calls; a 15-minute cadence across a 4-hour trading window is 
 to 16x today's call volume if left unchanged, so raising the cadence should come
 with either a lower per-cycle symbol count or a higher budget ceiling.
 
+## 4b. NEPSE index benchmark (Track Record tab)
+
+Every scan cycle now records one verified (non-LLM) NEPSE index bar into
+`price_history` — a second, independent data source (`merolagani.com/Indices.aspx`,
+distinct from the merolagani stock-quote endpoint), so the Track Record tab can show
+the index's own buy-and-hold return alongside the agent's real track record. No owner
+action needed beyond applying `supabase/migrations/20260917000000_price_history.sql`
+(§6 below) — the benchmark box appears automatically once 2+ daily bars have
+accrued, and stays silently hidden until then (no historical backfill: the source
+paginates via an ASP.NET postback, too fragile to simulate reliably).
+
+## 4c. Push notifications (web) — capture built, sending deferred
+
+Browser push **subscription capture** is live (`/api/push/subscribe`,
+`/api/push/status`) — users can opt in from Settings and their subscription is
+stored. **Actual sending is not wired yet**: RFC 8291 Web Push message encryption
+needs the `web-push` npm package (hand-rolling ECDH/HKDF/AES-GCM was judged too
+risky to ship unverified). Installing it was blocked twice in this environment by
+an unreachable npm registry — when you have registry access, `npm install
+web-push`, wire it into `src/lib/notify.js` alongside the existing email/Telegram
+channels, and this closes out. Until then, push toggles capture a subscription but
+deliver nothing.
+
 ## 5. Seed the scan universe
 
 The scan universe = union of all users' watchlists + discovery. To keep signals flowing:
