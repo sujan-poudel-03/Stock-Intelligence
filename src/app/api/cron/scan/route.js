@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { scanMarket, runDiscovery } from '@/lib/scan';
+import { getVerifiedIndex } from '@/lib/marketProviders';
+import { recordPricePoint } from '@/lib/priceHistory';
 import { normalizeExchange } from '@/lib/exchanges';
 import { unionWatchlistSymbols } from '@/lib/watchlistUnion';
 import { buildScanUniverse } from '@/lib/systemWatchlist';
@@ -99,6 +101,23 @@ async function handle(request) {
         .update({ status: 'error', error: `market: ${err?.message || err}`, completed_at: new Date().toISOString() })
         .eq('id', scanId);
       return NextResponse.json({ error: `market scan failed: ${err?.message || err}` }, { status: 500 });
+    }
+  }
+
+  // 2b. Record today's VERIFIED (non-LLM) index reading for the Track Record
+  // benchmark (src/lib/marketProviders.js getVerifiedIndex — merolagani's own
+  // index history table, distinct from scanMarket's LLM web-search index used for
+  // the Today-tab display). NEPSE-only (the scraper is merolagani-specific); best-
+  // effort and never blocks the scan — a failure here just means no benchmark bar
+  // for today, not a broken cron run.
+  if (exchange === 'NEPSE') {
+    try {
+      const verifiedIndex = await getVerifiedIndex();
+      if (verifiedIndex.verified) {
+        await recordPricePoint(supabase, { symbol: 'NEPSE_INDEX', exchange, verified: verifiedIndex });
+      }
+    } catch {
+      /* best-effort — see comment above */
     }
   }
 

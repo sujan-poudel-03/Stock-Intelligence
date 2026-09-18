@@ -26,6 +26,7 @@ import PriceChart from '@/design-system/components/PriceChart';
 import IndicatorSummary from '@/design-system/components/IndicatorSummary';
 import ConcentrationBars from '@/design-system/components/ConcentrationBars';
 import BacktestDemo from '@/design-system/components/BacktestDemo';
+import IndexBenchmark from '@/design-system/components/IndexBenchmark';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -416,6 +417,7 @@ export default function NepseApp() {
   const [brief, setBrief] = useState(null);
   const [activity, setActivity] = useState([]);
   const [track, setTrack] = useState(null);
+  const [indexBenchmark, setIndexBenchmark] = useState(null); // NEPSE_INDEX price_history bars, for the Track Record benchmark
   const [scanStarting, setScanStarting] = useState(false);
   const [scanStalled, setScanStalled] = useState(false); // client watchdog: scan frozen w/ no progress
   const [channels, setChannels] = useState(null); // alert-channel deliverability (/api/channels)
@@ -682,6 +684,17 @@ export default function NepseApp() {
       const data = await res.json();
       if (data && data.overall) setTrack(data);
     } catch (err) { console.error('track-record load failed:', err); }
+    // Index benchmark (verified, non-LLM — NEPSE only for now, see getVerifiedIndex).
+    // A view over the shared price_history bars, not a scan trigger.
+    if (exchange === 'NEPSE') {
+      try {
+        const r = await fetch('/api/price-history?symbol=NEPSE_INDEX&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' });
+        const d = await r.json();
+        setIndexBenchmark(Array.isArray(d.bars) ? d.bars : []);
+      } catch { setIndexBenchmark([]); }
+    } else {
+      setIndexBenchmark([]);
+    }
   }, [exchange]);
 
   // Reload the user's own positions (per-user table in 'api', localStorage in 'local',
@@ -1755,6 +1768,13 @@ export default function NepseApp() {
                       );
                     })}
                   </div>
+
+                  {exchange === 'NEPSE' && indexBenchmark && indexBenchmark.length >= 2 && (
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, fontFamily: 'Inter,sans-serif' }}>Index benchmark</div>
+                      <IndexBenchmark bars={indexBenchmark} track={track} />
+                    </div>
+                  )}
 
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                     {['BUY', 'SELL'].map(function (d) {
