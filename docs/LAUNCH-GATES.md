@@ -121,11 +121,14 @@ is `free` until a paid tier + gateway are switched on (post-legal, post-track-re
   config switch (`MARKET_DATA_SOURCES=merolagani,sharesansar`), not an engineering
   gap — see `docs/OWNER-RUNBOOK.md` §4.
 - ✅ Per-user **alert delivery** — email is LIVE (watched-symbol flips + outcome
-  alerts, `RESEND_API_KEY`-gated) and per-user Telegram linking is LIVE (bot
-  `/start` flow, `docs/OWNER-RUNBOOK.md` §4). Push (web) subscription capture is
-  built; actual encrypted send is deferred — `web-push` couldn't be installed
-  (npm registry unreachable in this environment); re-check when the owner has
-  registry access.
+  alerts, `RESEND_API_KEY`-gated), per-user Telegram linking is LIVE (bot
+  `/start` flow, `docs/OWNER-RUNBOOK.md` §4), and browser **push is now LIVE**
+  too — real RFC 8291-encrypted sends via the `web-push` package, config-gated
+  on `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (`docs/OWNER-RUNBOOK.md` §4c). (The
+  npm registry outage that blocked installing `web-push` earlier was a local
+  DNS/IPv6 misconfiguration, not an actual registry issue — resolved by forcing
+  `NODE_OPTIONS=--dns-result-order=ipv4first --no-network-family-autoselection`
+  on the npm process itself; see `~/.npmrc`'s comment for the underlying cause.)
 - ⏳ Intraday **light** scans (empty watchlist → seed/migration needed; a free
   external scheduler can also close the once-daily cadence gap today — §4a of
   `docs/OWNER-RUNBOOK.md`)

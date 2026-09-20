@@ -28,6 +28,7 @@ Legend: 🔴 required to run · 🟠 activates a shipped feature · ⚪ optional
 | `ALERT_TO` | ⚪ | Operator digest recipient (defaults to the built-in operator address) |
 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | ⚪ | Operator Telegram digest (per-user Telegram is a future item) |
 | `NEPALSTOCK_API_TOKEN` | ⚪ | Enables the official NEPSE source (a 3rd cross-check) once you have a token |
+| `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | 🟠 | Turns ON real browser push delivery (per-user watchlist-flip + outcome alerts). Generate with `node scripts/generate-vapid-keys.mjs` — see §4c. |
 | `ENABLE_NYSE` | ⚪ | `true` to enable the NYSE market (Yahoo source). Off by default. |
 | `NEXT_PUBLIC_REQUIRE_LOGIN` | ⚪ | `true` = hard login wall before the app renders (hides the public track record). Keep off for a public marketing surface. |
 
@@ -105,17 +106,50 @@ action needed beyond applying `supabase/migrations/20260917000000_price_history.
 accrued, and stays silently hidden until then (no historical backfill: the source
 paginates via an ASP.NET postback, too fragile to simulate reliably).
 
-## 4c. Push notifications (web) — capture built, sending deferred
+## 4c. Push notifications (web) — fully wired
 
-Browser push **subscription capture** is live (`/api/push/subscribe`,
-`/api/push/status`) — users can opt in from Settings and their subscription is
-stored. **Actual sending is not wired yet**: RFC 8291 Web Push message encryption
-needs the `web-push` npm package (hand-rolling ECDH/HKDF/AES-GCM was judged too
-risky to ship unverified). Installing it was blocked twice in this environment by
-an unreachable npm registry — when you have registry access, `npm install
-web-push`, wire it into `src/lib/notify.js` alongside the existing email/Telegram
-channels, and this closes out. Until then, push toggles capture a subscription but
-deliver nothing.
+Browser push is a real, third per-user delivery channel now (alongside email and
+Telegram): subscription capture (`/api/push/subscribe`, `/api/push/status`) AND
+actual RFC 8291-encrypted sending (`src/lib/notify.js` `deliverPush`, via the
+`web-push` npm package) are both live, wired the same way as the other two
+channels into `src/lib/alertDelivery.js`'s per-user watchlist-flip + outcome
+alerts.
+
+**To turn it on:**
+1. Generate a VAPID keypair **once per deployment**: `node scripts/generate-vapid-keys.mjs`.
+   Keep it stable — rotating it invalidates every existing subscription (users
+   would need to reconnect).
+2. Set `VAPID_PUBLIC_KEY` (safe to expose) and `VAPID_PRIVATE_KEY` (**server-only,
+   never `NEXT_PUBLIC_`**) in Vercel.
+3. Users toggle "Browser Push" on in Settings → My Alerts and click "connect
+   device" (nested under the toggle, same pattern as Telegram linking) — one
+   subscription per browser/device, several per user is fine (phone + laptop).
+4. Apply `supabase/migrations/20260919000000_push_subscriptions.sql` if not
+   already applied (§6) — until then the toggle is inert (schema-flag-gated).
+
+An expired/revoked subscription (the push service returns 404/410) is pruned
+automatically on the next send attempt — no manual cleanup needed. Push has no
+"operator digest" equivalent to email/Telegram's `ALERT_TO`/`TELEGRAM_CHAT_ID`
+(there's no single operator subscription) — it's purely the per-user channel.
+
+**Verified this session:** `npm install web-push` (previously blocked — see the
+note below), `/api/push/vapid-public-key` and `/api/channels` both correctly
+reflect `configured:true` once the env is set, and the full test/lint/build suite
+passes with the new channel wired in. Full device-connect-and-receive was **not**
+exercised end-to-end here: this deployment runs behind `NEXT_PUBLIC_REQUIRE_LOGIN`,
+so reaching the toggle needs a real Google sign-in, and `push_subscriptions` isn't
+migrated on this dev DB yet — both are exactly the owner-side steps in 3–4 above.
+
+> **Root cause of the earlier "npm registry unreachable" block (now resolved):**
+> this machine resolves IPv6 for `registry.npmjs.org` but has no working IPv6
+> route, so Node's own fetch hangs (~10s timeout) while `curl` succeeds instantly
+> over IPv4. `~/.npmrc` already carries a fix for child processes npm spawns
+> (`node-options=--dns-result-order=ipv4first --no-network-family-autoselection`),
+> but npm's *own* process doesn't pick that up from `.npmrc` — it needs
+> `NODE_OPTIONS` set directly in the environment, e.g.
+> `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autoselection" npm install <pkg>`.
+> Consider exporting `NODE_OPTIONS` in your shell profile so every `npm` command
+> picks it up automatically, not just ones prefixed by hand.
 
 ## 5. Seed the scan universe
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { listChannels, configuredChannels, formatScanDigest } from '../src/lib/notify.js';
+import { listChannels, configuredChannels, formatScanDigest, deliverPush } from '../src/lib/notify.js';
 
 describe('notification channels (config-gated)', () => {
   it('marks a channel configured only when all its env is present', () => {
@@ -23,6 +23,32 @@ describe('notification channels (config-gated)', () => {
 
   it('does not leak send functions to metadata', () => {
     expect(listChannels({}).every((c) => c.send === undefined)).toBe(true);
+  });
+
+  it('push is reported but never part of the operator-digest fan-out', () => {
+    const env = { VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv' };
+    const push = listChannels(env).find((c) => c.id === 'push');
+    expect(push.configured).toBe(true);
+    // configuredChannels() drives notify()'s operator digest — push has no
+    // operator subscription to send to, so it must never appear here.
+    expect(configuredChannels(env).map((c) => c.id)).not.toContain('push');
+  });
+
+  it('push needs BOTH VAPID keys to be reported configured', () => {
+    expect(listChannels({ VAPID_PUBLIC_KEY: 'pub' }).find((c) => c.id === 'push').configured).toBe(false);
+  });
+});
+
+describe('deliverPush (config-gated, per-subscription)', () => {
+  it('returns false without sending when VAPID keys are unset', async () => {
+    const subscription = { endpoint: 'https://push.example/x', keys: { p256dh: 'a', auth: 'b' } };
+    await expect(deliverPush({ subscription, title: 't', text: 'x' }, {})).resolves.toBe(false);
+  });
+
+  it('returns false for a malformed subscription even when VAPID is configured', async () => {
+    const env = { VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv' };
+    await expect(deliverPush({ subscription: null, title: 't', text: 'x' }, env)).resolves.toBe(false);
+    await expect(deliverPush({ subscription: { endpoint: 'e' }, title: 't', text: 'x' }, env)).resolves.toBe(false);
   });
 });
 

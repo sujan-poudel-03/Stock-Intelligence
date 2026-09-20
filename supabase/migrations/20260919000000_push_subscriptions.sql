@@ -1,12 +1,12 @@
--- BROWSER PUSH SUBSCRIPTIONS — the capture/storage half of Web Push (Phase G
--- reach). Additive + idempotent, mirrors paper_positions' per-user/owner-only
--- pattern (20260810000000_paper_trading.sql).
+-- BROWSER PUSH SUBSCRIPTIONS — the storage half of Web Push (Phase G reach).
+-- Additive + idempotent, mirrors paper_positions' per-user/owner-only pattern
+-- (20260810000000_paper_trading.sql).
 --
--- SCOPE: this migration + its API routes/service-worker plumbing capture and
--- store a browser's push subscription. Actually SENDING an encrypted push
--- (RFC 8291: ECDH + HKDF + AES-128-GCM) is a deliberately separate, deferred
--- step — see src/lib/notify.js and the redesign discussion. Until that ships,
--- a stored subscription here is inert (nothing reads this table to send yet).
+-- SCOPE: this migration stores a browser's push subscription. Actually SENDING
+-- an encrypted push (RFC 8291: ECDH + HKDF + AES-128-GCM, via the `web-push`
+-- package) is wired in src/lib/notify.js's deliverPush(), used by
+-- alertDelivery.js whenever a user's "push" alert channel is on — see
+-- docs/OWNER-RUNBOOK.md §4c for the VAPID env vars that activate it.
 --
 -- One row per (user, device/browser) — a user can have several subscriptions
 -- (phone + laptop). endpoint is unique: PushManager gives a stable per-

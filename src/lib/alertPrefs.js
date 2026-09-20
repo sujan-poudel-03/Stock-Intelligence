@@ -6,7 +6,7 @@
 // can't stuff arbitrary keys into the jsonb, and so a read always returns a full,
 // defined object the UI can bind to.
 
-export const ALERT_CHANNELS = ['email', 'telegram'];
+export const ALERT_CHANNELS = ['email', 'telegram', 'push'];
 export const ALERT_THRESHOLDS = ['onBuy', 'onSell'];
 
 function pickBooleans(obj, keys) {

@@ -310,6 +310,15 @@ is added.)
   partial/failed scans, best-effort in the background. Admin sees channel status in
   Settings → Notifications (`/api/admin/channels`). Events already surface in the
   Activity panel. (Viber/WhatsApp can be added as further channels later.)
+- [x] **Per-user push delivery** — browser push is a THIRD per-user TIER-2 channel
+  (alongside per-user email/Telegram, `src/lib/alertDelivery.js`), sending real RFC
+  8291-encrypted messages via the `web-push` package (`src/lib/notify.js`
+  `deliverPush`), config-gated on `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY`
+  (`scripts/generate-vapid-keys.mjs`). Unlike email/Telegram it has no operator-
+  digest use (there's no single "operator" push subscription), so it's reported
+  by `listChannels()`/`/api/channels` for UI status but deliberately excluded from
+  `notify()`'s fan-out. An expired/revoked device subscription (HTTP 404/410 from
+  the push service) is pruned automatically on the next send attempt.
 
 **Phase 4 — Go-to-market.**
 - Positioning: "An AI analyst for NEPSE that shows its work and its track record" —

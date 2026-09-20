@@ -27,7 +27,7 @@ export default function AdminChannels() {
   }, []);
 
   return (
-    <SectionCard icon="@" iconColor={color.positive} title="Notifications" subtitle="Daily brief + failed/partial-scan alerts. Active automatically when the env is set.">
+    <SectionCard icon="@" iconColor={color.positive} title="Notifications" subtitle="Operator digest (email/Telegram) + per-user watchlist alerts (email/Telegram/push). Active automatically when the env is set.">
       {loading ? (
         <div style={{ fontSize: text.body, color: color.textFaint, padding: '8px 0' }}>Loading…</div>
       ) : (

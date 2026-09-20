@@ -578,10 +578,9 @@ export default function NepseApp() {
       .catch(function (e) { showToast(e.message || 'Could not unlink', 'err'); });
   }
 
-  // Browser push — connect/disconnect THIS device (capture-only for now; see
-  // src/lib/pushSubscriptions.js for why sending isn't wired up yet). Standard
-  // Push API calls (well-documented, stable browser API) — the part this session
-  // could not verify is the future encrypted SEND, not this subscribe flow.
+  // Browser push — connect/disconnect THIS device. Standard Push API calls;
+  // the actual encrypted delivery is server-side (src/lib/notify.js deliverPush,
+  // used by alertDelivery.js whenever the "push" channel is toggled on above).
   function urlBase64ToUint8Array(base64url) {
     var pad = '='.repeat((4 - (base64url.length % 4)) % 4);
     var base64 = (base64url + pad).replace(/-/g, '+').replace(/_/g, '/');
@@ -2009,7 +2008,7 @@ export default function NepseApp() {
                 <SignInPrompt title="Sign in to set alert preferences" sub="Choose how the agent notifies you and which signals trigger an alert. Your preferences are private to your account." onSignIn={auth.signIn} />
               ) : (
                 <SectionCard icon="!" iconColor={dsColor.warning} title="My Alerts" subtitle="How the agent notifies you when a signal fires">
-                  {[['email', 'Email'], ['telegram', 'Telegram']].map(function (c) {
+                  {[['email', 'Email'], ['telegram', 'Telegram'], ['push', 'Browser Push']].map(function (c) {
                     var chInfo = channelMap[c[0]];
                     var needsSetup = chInfo && channelNeedsSetup(!!alertPrefs.channels[c[0]], chInfo.configured);
                     return (
@@ -2052,29 +2051,29 @@ export default function NepseApp() {
                             )}
                           </div>
                         )}
+                        {/* Per-device push connection — nested here because it's only
+                            meaningful once this channel is toggled on (CLAUDE.md
+                            dependent-action rule), same shape as Telegram linking above. */}
+                        {c[0] === 'push' && alertPrefs.channels.push && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--canvas)', borderRadius: 6, border: '1px solid var(--border-alt)' }}>
+                            {!pushEnabled ? (
+                              <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Browser push isn&apos;t available on this deployment yet.</span>
+                            ) : pushSubscribed ? (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: '#10b981' }}>This device is connected</span>
+                                <button onClick={disablePush} disabled={pushBusy} style={btn('#ef4444', true)}>{pushBusy ? '…' : 'disconnect'}</button>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Not connected yet — alerts can&apos;t reach this device.</span>
+                                <button onClick={enablePush} disabled={pushBusy} style={btn('#3b82f6', true)}>{pushBusy ? 'connecting…' : 'connect device'}</button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
-                  {/* Browser push — a device-connection step, deliberately NOT one of the
-                      channel toggles above: nothing sends an alert THROUGH push yet (see
-                      src/lib/pushSubscriptions.js), only the plumbing to connect a device
-                      exists so far. Framed honestly as "coming soon" rather than implying
-                      it already delivers signal alerts. */}
-                  {pushEnabled && (
-                    <div style={{ padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div>
-                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'Inter,sans-serif' }}>Browser push</div>
-                          <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 2 }}>Connect this device now — alert delivery here is coming soon.</div>
-                        </div>
-                        {pushSubscribed ? (
-                          <button onClick={disablePush} disabled={pushBusy} style={btn('#ef4444', true)}>{pushBusy ? '…' : 'disconnect'}</button>
-                        ) : (
-                          <button onClick={enablePush} disabled={pushBusy} style={btn('#3b82f6', true)}>{pushBusy ? 'connecting…' : 'connect device'}</button>
-                        )}
-                      </div>
-                    </div>
-                  )}
                   {[['onBuy', 'Alert on BUY signals'], ['onSell', 'Alert on SELL signals']].map(function (t) {
                     return (
                       <div key={t[0]} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>

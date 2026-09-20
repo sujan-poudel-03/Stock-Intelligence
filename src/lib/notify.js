@@ -7,25 +7,36 @@
 //
 //   email    ← RESEND_API_KEY (+ optional ALERT_TO / ALERT_FROM)
 //   telegram ← TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
-
+//
+// Push is NOT in this list: there's no single "operator" push subscription to send
+// the digest to (subscriptions are per-user, per-browser) — see deliverPush() below,
+// used only by alertDelivery.js's per-user TIER-2 fan-out. It's still reported by
+// listChannels() (below) so the admin/My-Alerts UI can show its configured status.
 const CHANNELS = [
   { id: 'email', label: 'Email (Resend)', requiresEnv: ['RESEND_API_KEY'], send: sendEmail },
   { id: 'telegram', label: 'Telegram', requiresEnv: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'], send: sendTelegram },
 ];
+
+const PUSH_REQUIRES_ENV = ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'];
 
 function hasEnv(keys, env) {
   return keys.every((k) => !!(env[k] && String(env[k]).trim()));
 }
 
 // Metadata for the admin screen (no functions). `configured` drives the active/off
-// display; channels can't be toggled in the UI — they're purely env-driven.
+// display; channels can't be toggled in the UI — they're purely env-driven. Push is
+// appended separately (not part of CHANNELS/configuredChannels) since it has no
+// operator-digest `send` — see the comment above.
 export function listChannels(env = process.env) {
-  return CHANNELS.map((c) => ({
-    id: c.id,
-    label: c.label,
-    requiresEnv: c.requiresEnv,
-    configured: hasEnv(c.requiresEnv, env),
-  }));
+  return [
+    ...CHANNELS.map((c) => ({
+      id: c.id,
+      label: c.label,
+      requiresEnv: c.requiresEnv,
+      configured: hasEnv(c.requiresEnv, env),
+    })),
+    { id: 'push', label: 'Browser Push', requiresEnv: PUSH_REQUIRES_ENV, configured: hasEnv(PUSH_REQUIRES_ENV, env) },
+  ];
 }
 
 export function configuredChannels(env = process.env) {
@@ -114,6 +125,29 @@ export async function deliverTelegramDM({ chatId, text }, env = process.env) {
   } catch {
     return false;
   }
+}
+
+// deliverPush({ subscription, title, text }, env): send ONE encrypted Web Push
+// message (RFC 8291, via the `web-push` package) to a single browser subscription
+// ({ endpoint, keys: { p256dh, auth } } — exactly PushManager.subscribe()'s shape).
+// Config-gated on VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY (scripts/generate-vapid-
+// keys.mjs); returns false without sending if either is unset or the subscription
+// is malformed. THROWS on a send failure (mirrors sendNotification) — the caller
+// (alertDelivery.js) catches it to distinguish an expired subscription (a
+// WebPushError with statusCode 404/410 — prune it) from a transient failure (log
+// and move on). Per-message, not a fan-out: the caller loops over a user's
+// subscriptions, since one send failing must never block another device's.
+export async function deliverPush({ subscription, title, text }, env = process.env) {
+  if (!hasEnv(PUSH_REQUIRES_ENV, env)) return false;
+  if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return false;
+  const webpush = (await import('web-push')).default;
+  webpush.setVapidDetails(
+    env.VAPID_SUBJECT || 'mailto:marketing@nepawholesale.com',
+    env.VAPID_PUBLIC_KEY,
+    env.VAPID_PRIVATE_KEY
+  );
+  await webpush.sendNotification(subscription, JSON.stringify({ title, body: text }));
+  return true;
 }
 
 async function sendEmail({ title, text }, env) {

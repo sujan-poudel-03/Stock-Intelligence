@@ -1,7 +1,7 @@
-// Browser push subscription storage — the capture half of Web Push (Phase G
-// reach; see supabase/migrations/20260919000000_push_subscriptions.sql for why
-// actually SENDING an encrypted push is a separate, deferred step). Mirrors the
-// owner-scoped-client pattern used by telegramLink.js.
+// Browser push subscription storage (Phase G reach). Mirrors the owner-scoped-
+// client pattern used by telegramLink.js. Actual encrypted SENDING lives in
+// notify.js's deliverPush (RFC 8291, via the `web-push` package) — this file is
+// just the subscription ledger it reads from and prunes.
 
 import { pushSubscriptionsReady } from './schemaFlags.js';
 
@@ -52,5 +52,30 @@ export async function hasAnySubscription(supabase, userId) {
     return !!count;
   } catch {
     return false;
+  }
+}
+
+// listSubscriptionsByUser(supabase, userIds) -> Map<user_id, [{endpoint,p256dh,auth_key}]>
+// One batched read for the per-user push fan-out in alertDelivery.js — same
+// "fetch once, loop over the map" shape as listUserEmailMap, not one query per
+// user. Empty map on any miss (unmigrated DB, empty input, read failure).
+export async function listSubscriptionsByUser(supabase, userIds) {
+  try {
+    if (!supabase || !Array.isArray(userIds) || !userIds.length) return new Map();
+    if (!(await pushSubscriptionsReady())) return new Map();
+    const { data, error } = await supabase
+      .from('push_subscriptions')
+      .select('user_id, endpoint, p256dh, auth_key')
+      .in('user_id', userIds);
+    if (error || !Array.isArray(data)) return new Map();
+    const map = new Map();
+    for (const row of data) {
+      if (!row?.user_id || !row?.endpoint) continue;
+      if (!map.has(row.user_id)) map.set(row.user_id, []);
+      map.get(row.user_id).push({ endpoint: row.endpoint, p256dh: row.p256dh, auth_key: row.auth_key });
+    }
+    return map;
+  } catch {
+    return new Map();
   }
 }
