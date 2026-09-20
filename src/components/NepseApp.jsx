@@ -1159,7 +1159,7 @@ export default function NepseApp() {
 
   // ---------------------------------------------------------------------------
   return (
-    <div className="app-shell" style={{ background: 'var(--canvas)', minHeight: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'IBM Plex Mono,monospace', color: 'var(--text-secondary)', fontSize: 12 }}>
+    <div className="app-shell" style={{ background: 'var(--canvas)', height: '100dvh', display: 'flex', flexDirection: 'column', fontFamily: 'IBM Plex Mono,monospace', color: 'var(--text-secondary)', fontSize: 12 }}>
 
       {/* toasts */}
       <div style={{ position: 'fixed', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 400, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', alignItems: 'center' }}>
@@ -1198,9 +1198,9 @@ export default function NepseApp() {
           fixed column; collapses to nothing on mobile, which keeps the pre-redesign
           bottom-of-header pattern (nav folds into the top bar) rather than inventing
           an untested mobile drawer in this pass. */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         {!isMobile && (
-          <div style={{ width: 208, flexShrink: 0, background: dsColor.surfaceRaised, borderRight: '1px solid ' + dsColor.borderSubtle, display: 'flex', flexDirection: 'column', padding: '14px 10px' }}>
+          <div style={{ width: 208, flexShrink: 0, background: dsColor.surfaceRaised, borderRight: '1px solid ' + dsColor.borderSubtle, display: 'flex', flexDirection: 'column', padding: '14px 10px', overflowY: 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px', marginBottom: 18 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: running ? dsColor.warning : dsColor.positive, animation: running ? '_dot 1s ease infinite' : 'none' }} />
               <span style={{ fontSize: dsText.title, fontWeight: 600, color: dsColor.textPrimary, letterSpacing: '-.01em', fontFamily: dsFont.ui }}>{exchange}</span>
