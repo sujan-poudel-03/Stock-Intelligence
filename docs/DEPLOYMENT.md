@@ -178,9 +178,16 @@ digest and **alerts on partial/failed scans**. Status in **Settings → Notifica
 
 ## 8. Owner action checklist (the outstanding items)
 
-- [ ] **Apply the `weights` decay migration** — `npm run deploy` or paste
-  `supabase/migrations/20260724120000_weights_decay.sql` in the SQL Editor. Confirm
-  with `npm run doctor`. (Optional/non-blocking — decay activates once applied.)
+- [ ] **Apply pending migrations** — `npm run deploy` or paste each new file in
+  `supabase/migrations/*.sql` into the SQL Editor, in filename (date) order.
+  Confirm with `npm run doctor` (lists tables present/missing). Every migration
+  here is additive and schema-flag-gated — the app runs fine unmigrated, features
+  just stay off until applied. Notably still worth checking:
+  `20260724120000_weights_decay.sql` (recency-weighted win rate),
+  `20260917000000_price_history.sql` (chart data + the Track Record index
+  benchmark, `docs/OWNER-RUNBOOK.md` §4b), `20260918000000_telegram_link.sql`
+  (per-user Telegram), `20260919000000_push_subscriptions.sql` (push opt-in
+  capture, `docs/OWNER-RUNBOOK.md` §4c).
 - [ ] **merolagani ToS / legal (P3-1)** — a Nepali securities lawyer reviews scraping
   ToS + SEBON licensing before charging users. **Gates commercial launch.**
 - [ ] **`NEPALSTOCK_API_TOKEN`** — set when you obtain it → the NEPSE-official source

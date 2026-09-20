@@ -26,19 +26,25 @@ import { buildSummary } from './portfolioMath.js';
 // priceUnavailable (cost-basis only) rather than triggering more network round-trips.
 const MAX_PRICE_FALLBACKS = 5;
 
-// buildPortfolioSummary(user) -> the portfolioMath.buildSummary result (+ ok flag).
-// `user` is the { id, token } from getUserFromRequest.
-export async function buildPortfolioSummary(user) {
+// buildPortfolioSummary(user, exchange) -> the portfolioMath.buildSummary result
+// (+ ok flag), scoped to ONE exchange — a NEPSE position must never count toward a
+// NYSE concentration/P&L total or vice versa (the same isolation rule already
+// applied to GET /api/portfolio). `user` is the { id, token } from getUserFromRequest.
+export async function buildPortfolioSummary(user, exchange) {
   const supabase = getUserSupabase(user?.token);
   if (!supabase || !user?.id) {
     return { ok: false, positions: [], totals: null, concentration: null };
   }
+  const ex = normalizeExchange(exchange);
 
   // Owner-only read of this user's positions (RLS + explicit user_id filter).
+  // portfolios.exchange is unconditional (part of the table's original CREATE
+  // TABLE, not a later ALTER) — see GET /api/portfolio for the same reasoning.
   const { data, error } = await supabase
     .from('portfolios')
     .select('*')
     .eq('user_id', user.id)
+    .eq('exchange', ex)
     .order('opened_at', { ascending: false });
   if (error) throw error;
   const positions = data || [];

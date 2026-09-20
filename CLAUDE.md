@@ -32,6 +32,25 @@ make an admin, Google Sign-In setup, and the owner-action checklist.
   real call site needs it — no speculative "complete" component library
   (consistent with the no-abstractions-beyond-what's-needed rule below).
 
+- **Theming: neutral colors are CSS variables, semantic colors are constant
+  literals — never hardcode a new neutral hex.** The app supports a dark
+  (default) and light theme (`src/hooks/useTheme.js`, a device-local
+  preference, toggled in Settings). Only the NEUTRAL palette — canvas/surface/
+  border/text scale — changes between themes, defined as CSS custom properties
+  in `src/app/globals.css` (`:root` = dark, `:root[data-theme='light']` =
+  overrides) and consumed via `src/design-system/tokens.js`'s `color.*`
+  neutral keys (which resolve to `var(--x)` strings). SEMANTIC status colors
+  (BUY/positive green, SELL/negative red, HOLD/warning amber, info blue,
+  discovery violet) are deliberately left as constant hex literals, NOT theme
+  variables — this is what lets the ~90 call sites that build a translucent
+  tint by string-concatenating an alpha suffix onto an accent color (e.g.
+  `sc + '22'`) keep working unchanged; a CSS `var()` reference cannot have an
+  alpha suffix appended to it as a string. Consequence: a new **neutral**
+  surface/border/text color must be added to `globals.css` (both blocks) and
+  referenced via `var(--x)`, never a hardcoded hex — hardcoding one silently
+  breaks it for light-theme users. A new **semantic/status** color can stay a
+  plain hex literal, matching the existing accent colors.
+
 - **All model calls go through `callLLM`** (`src/lib/llm.js`). Never import a
   provider SDK (`@anthropic-ai/sdk`, `@google/genai`) into feature code. Parse
   model output with `parseJson()` (returns `null` on junk).
@@ -82,11 +101,16 @@ are cleared. Full rationale + the phased plan is in **Production roadmap** below
   Use the LLM only to *reason over* verified numbers — never to source them.
   `scanOneStock` and outcome resolution are wired onto `getVerifiedPrice` (the LLM is
   barred from setting a price). **`merolagani` is LIVE** (real scraped quotes; the
-  deployment default). `sample` is the offline placeholder (labeled, flagged by the
-  disclaimer). `sharesansar` is a not-yet-implemented stub; `nepalstock` is
-  build-ready but **config-gated** on `NEPALSTOCK_API_TOKEN` (disabled/unselectable
-  until set). Sources declare `requiresEnv`; unavailable ones are rejected by
-  `setActiveSources`, so the admin can't switch to a disabled source. **ToS caveat:**
+  deployment default) and **`sharesansar` is also LIVE** (real scraped "Today's Share
+  Price" board, tested — `tests/sharesansar.test.js`), giving the verified layer two
+  independent, zero-env-config real sources to cross-check — **not yet selected as an
+  active source on any deployment**, so turning it on in Settings → Market Data
+  Sources alongside merolagani is a real, available redundancy improvement, not a
+  build task. `sample` is the offline placeholder (labeled, flagged by the
+  disclaimer). `nepalstock` is build-ready but **config-gated** on
+  `NEPALSTOCK_API_TOKEN` (disabled/unselectable until set). Sources declare
+  `requiresEnv`; unavailable ones are rejected by `setActiveSources`, so the admin
+  can't switch to a disabled source. **ToS caveat:**
   commercial scraping of merolagani is still pending the P3-1 legal review.
 
 - **Every user-facing signal/brief carries "educational, not financial advice"
@@ -211,9 +235,11 @@ is existential, while A→B remains an open door later (licensed) but B→A does
 - [x] `scanOneStock` + outcome resolution rewired onto `getVerifiedPrice` (LLM can
   no longer set a price).
 - [x] **P1-1**: `merolagani` live fetcher (real NEPSE quotes), validated end-to-end.
-  Config-gated provider system: sources declare `requiresEnv` and stay disabled/
-  unselectable until set (nepalstock ← `NEPALSTOCK_API_TOKEN`). ToS review (P3-1)
-  still pending before commercial use. (sharesansar: not yet implemented.)
+  `sharesansar` is ALSO a live, tested fetcher (not a stub) — a second independent
+  real source ready to activate for cross-checking, just not yet selected as active
+  on any deployment. Config-gated provider system: sources declare `requiresEnv` and
+  stay disabled/unselectable until set (nepalstock ← `NEPALSTOCK_API_TOKEN`). ToS
+  review (P3-1) still pending before commercial use of the scraped sources.
 
 **Phase 1.5 — Learning & validation (robust, explainable "RL").** — harness DONE.
 - [x] **Backtest / replay harness** `src/lib/backtest.js` — the validation
@@ -284,6 +310,15 @@ is added.)
   partial/failed scans, best-effort in the background. Admin sees channel status in
   Settings → Notifications (`/api/admin/channels`). Events already surface in the
   Activity panel. (Viber/WhatsApp can be added as further channels later.)
+- [x] **Per-user push delivery** — browser push is a THIRD per-user TIER-2 channel
+  (alongside per-user email/Telegram, `src/lib/alertDelivery.js`), sending real RFC
+  8291-encrypted messages via the `web-push` package (`src/lib/notify.js`
+  `deliverPush`), config-gated on `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY`
+  (`scripts/generate-vapid-keys.mjs`). Unlike email/Telegram it has no operator-
+  digest use (there's no single "operator" push subscription), so it's reported
+  by `listChannels()`/`/api/channels` for UI status but deliberately excluded from
+  `notify()`'s fan-out. An expired/revoked device subscription (HTTP 404/410 from
+  the push service) is pruned automatically on the next send attempt.
 
 **Phase 4 — Go-to-market.**
 - Positioning: "An AI analyst for NEPSE that shows its work and its track record" —

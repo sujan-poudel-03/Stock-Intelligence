@@ -12,6 +12,7 @@ import Term from '@/components/Term';
 import { useAuth } from '@/lib/useAuth';
 import { getAccessToken } from '@/lib/authClient';
 import useBreakpoint from '@/hooks/useBreakpoint';
+import useTheme from '@/hooks/useTheme';
 import { EXCHANGES, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 import { maskEmail, asOfLabel, channelNeedsSetup } from '@/lib/format';
 import { previewOrder, isWholeQty } from '@/lib/paperTrade';
@@ -19,6 +20,13 @@ import { color as dsColor, spacing as dsSpacing, radius as dsRadius, font as dsF
 import StatusPill from '@/design-system/components/StatusPill';
 import Pill from '@/design-system/components/Pill';
 import SectionCard from '@/design-system/components/SectionCard';
+import { suggestedQuantity } from '@/lib/positionSizing';
+import { toCsv, downloadCsv } from '@/lib/csvExport';
+import PriceChart from '@/design-system/components/PriceChart';
+import IndicatorSummary from '@/design-system/components/IndicatorSummary';
+import ConcentrationBars from '@/design-system/components/ConcentrationBars';
+import BacktestDemo from '@/design-system/components/BacktestDemo';
+import IndexBenchmark from '@/design-system/components/IndexBenchmark';
 
 // ============================================================================
 // NEPSE Intelligence V2 — full UI
@@ -133,7 +141,7 @@ var SIG_COLORS = { BUY: '#10b981', SELL: '#ef4444', WATCH: '#f59e0b', AVOID: '#6
 // Watchlist provenance colors. Owned-row sources (manual/discovered/holding) + the
 // GLOBAL curated-list sources (seed/admin/discovery/system) share this map.
 var SRC_COLORS = { discovered: '#a78bfa', holding: '#8b5cf6', discovery: '#a78bfa', admin: '#3b82f6', seed: '#10b981', system: '#10b981' };
-function srcColor(src) { return SRC_COLORS[src] || '#4a5568'; }
+function srcColor(src) { return SRC_COLORS[src] || 'var(--text-faint)'; }
 var DEFAULT_SETTINGS = {
   discovery_on: true,
   discovery_depth: 8,
@@ -153,56 +161,56 @@ function BuyChargePreview(props) {
   if (!q || !p) return null;
   var ch = calcC('BUY', q, p, 0, 0);
   return (
-    <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8, padding: '6px 10px', background: '#07090e', borderRadius: 6, border: '1px solid #1e2840', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-      <span>{'pay '}<span style={{ color: '#e2e8f0', fontWeight: 500 }}>{toRs(ch.net)}</span></span>
-      <span>{'broker '}<span style={{ color: '#c8d4e8' }}>{toRs2(ch.b)}</span></span>
-      <span>{'DP '}<span style={{ color: '#c8d4e8' }}>{'Rs25'}</span></span>
+    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 8, padding: '6px 10px', background: 'var(--canvas)', borderRadius: 6, border: '1px solid var(--border-default)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <span>{'pay '}<span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{toRs(ch.net)}</span></span>
+      <span>{'broker '}<span style={{ color: 'var(--text-secondary)' }}>{toRs2(ch.b)}</span></span>
+      <span>{'DP '}<span style={{ color: 'var(--text-secondary)' }}>{'Rs25'}</span></span>
       <span>{'BE '}<span style={{ color: '#10b981', fontWeight: 500 }}>{'Rs' + ch.be.toFixed(2)}</span></span>
     </div>
   );
 }
 
 function card(leftColor, extra) {
-  var base = { background: '#0b0e16', border: '1px solid #1e2840', borderLeft: '2px solid ' + (leftColor || '#1e2840'), borderRadius: 10, padding: '14px 16px', marginBottom: 10 };
+  var base = { background: 'var(--surface)', border: '1px solid var(--border-default)', borderLeft: '2px solid ' + (leftColor || 'var(--border-default)'), borderRadius: 10, padding: '14px 16px', marginBottom: 10 };
   return extra ? Object.assign({}, base, extra) : base;
 }
 function btn(color, sm) {
-  return { padding: sm ? '4px 10px' : '6px 14px', borderRadius: 7, border: '1px solid ' + (color || '#1e2840'), background: 'transparent', color: color || '#4a5568', fontSize: sm ? 10 : 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', letterSpacing: '.02em' };
+  return { padding: sm ? '4px 10px' : '6px 14px', borderRadius: 7, border: '1px solid ' + (color || 'var(--border-default)'), background: 'transparent', color: color || 'var(--text-faint)', fontSize: sm ? 10 : 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', letterSpacing: '.02em' };
 }
 // sbox(label, value, color, termKey?) — a small stat box. When `termKey` is given
 // the LABEL becomes a plain-English tooltip (glossary), leaving the value untouched.
 function sbox(label, value, color, termKey) {
   return (
-    <div style={{ background: '#07090e', borderRadius: 7, padding: '6px 10px', border: '1px solid #141824' }}>
-      <div style={{ fontSize: 8, color: '#2a3550', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 3 }}>{termKey ? <Term k={termKey}>{label}</Term> : label}</div>
-      <div style={{ fontSize: 12, fontWeight: 500, color: color || '#c8d4e8', fontFamily: 'IBM Plex Mono,monospace' }}>{value || '-'}</div>
+    <div style={{ background: 'var(--canvas)', borderRadius: 7, padding: '6px 10px', border: '1px solid var(--border-faint)' }}>
+      <div style={{ fontSize: 8, color: 'var(--text-ghost)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 3 }}>{termKey ? <Term k={termKey}>{label}</Term> : label}</div>
+      <div style={{ fontSize: 12, fontWeight: 500, color: color || 'var(--text-secondary)', fontFamily: 'IBM Plex Mono,monospace' }}>{value || '-'}</div>
     </div>
   );
 }
 function ghost(w) {
-  return <div style={{ height: 10, background: '#1e2840', borderRadius: 4, width: (w || 70) + '%', animation: '_pulse 1.6s ease infinite', marginBottom: 8 }} />;
+  return <div style={{ height: 10, background: 'var(--border-default)', borderRadius: 4, width: (w || 70) + '%', animation: '_pulse 1.6s ease infinite', marginBottom: 8 }} />;
 }
 function SectionHeader(props) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: props.mb || 14 }}>
       <div style={{ width: 3, height: 16, background: props.color || '#3b82f6', borderRadius: 2 }} />
-      <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', letterSpacing: '-.01em' }}>{props.title}</span>
-      {props.sub && <span style={{ fontSize: 10, color: '#4a5568', marginLeft: 2 }}>{props.sub}</span>}
+      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif', letterSpacing: '-.01em' }}>{props.title}</span>
+      {props.sub && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 2 }}>{props.sub}</span>}
     </div>
   );
 }
 function ToggleBtn(props) {
   var onStyle = { padding: '5px 18px', borderRadius: 20, border: '1px solid #10b981', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', minWidth: 52, background: '#10b981', color: '#fff' };
-  var offStyle = { padding: '5px 18px', borderRadius: 20, border: '1px solid #1e2840', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', minWidth: 52, background: '#0b0e16', color: '#4a5568' };
+  var offStyle = { padding: '5px 18px', borderRadius: 20, border: '1px solid var(--border-default)', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', minWidth: 52, background: 'var(--surface)', color: 'var(--text-faint)' };
   return <button onClick={props.onClick} style={props.on ? onStyle : offStyle}>{props.on ? 'ON' : 'OFF'}</button>;
 }
 function SegBtn(props) {
   return (
-    <div style={{ display: 'flex', gap: 3, background: '#07090e', padding: 3, borderRadius: 8, border: '1px solid #1e2840' }}>
+    <div style={{ display: 'flex', gap: 3, background: 'var(--canvas)', padding: 3, borderRadius: 8, border: '1px solid var(--border-default)' }}>
       {props.options.map(function (o) {
         var active = props.value === (o[0] != null ? o[0] : o);
         var aStyle = { padding: '4px 10px', borderRadius: 6, border: '1px solid #3b82f6', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', background: '#3b82f622', color: '#3b82f6' };
-        var iStyle = { padding: '4px 10px', borderRadius: 6, border: '1px solid #1e2840', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', background: 'transparent', color: '#4a5568' };
+        var iStyle = { padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border-default)', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', background: 'transparent', color: 'var(--text-faint)' };
         return <button key={o[0] != null ? o[0] : o} onClick={function () { props.onChange(o[0] != null ? o[0] : o); }} style={active ? aStyle : iStyle}>{o[1] != null ? o[1] : o}</button>;
       })}
     </div>
@@ -399,6 +407,7 @@ export default function NepseApp() {
   const [showOnboard, setShowOnboard] = useState(false);
   const auth = useAuth(); // client view of admin state (server enforces the boundary)
   const bp = useBreakpoint(); // SSR-safe viewport class; drives structural (not just CSS) responsiveness
+  const { theme, setTheme } = useTheme(); // personal-preference dark/light/system theme
   const isMobile = bp.isMobile;
 
   // Server-backed data
@@ -408,19 +417,26 @@ export default function NepseApp() {
   const [brief, setBrief] = useState(null);
   const [activity, setActivity] = useState([]);
   const [track, setTrack] = useState(null);
+  const [indexBenchmark, setIndexBenchmark] = useState(null); // NEPSE_INDEX price_history bars, for the Track Record benchmark
   const [scanStarting, setScanStarting] = useState(false);
   const [scanStalled, setScanStalled] = useState(false); // client watchdog: scan frozen w/ no progress
   const [channels, setChannels] = useState(null); // alert-channel deliverability (/api/channels)
 
   // Client-side bookkeeping
   const [portfolio, setPortfolio] = useState([]);
+  const [portfolioConcentration, setPortfolioConcentration] = useState(null); // server-computed sector/symbol concentration (Phase C risk tools)
   const [tradeLog, setTradeLog] = useState([]);
   const [stockCache, setStockCache] = useState({});
   const [watchlist, setWatchlist] = useState([]);
   const [wlSources, setWlSources] = useState({}); // { SYMBOL: 'manual'|'discovered'|'holding' }
   const [systemWatchlist, setSystemWatchlist] = useState([]); // GLOBAL curated list [{ symbol, source }]
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [alertPrefs, setAlertPrefs] = useState({ channels: {}, thresholds: {} }); // per-user alert prefs
+  const [alertPrefs, setAlertPrefs] = useState({ channels: {}, thresholds: {}, telegramLinked: false }); // per-user alert prefs
+  const [telegramLinkInfo, setTelegramLinkInfo] = useState(null); // { code, expiresAt, botUsername } while linking (Phase G reach)
+  const [telegramLinking, setTelegramLinking] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false); // server has VAPID_PUBLIC_KEY configured
+  const [pushSubscribed, setPushSubscribed] = useState(false); // this device has a stored subscription
+  const [pushBusy, setPushBusy] = useState(false);
 
   // Chat
   const [chat, setChat] = useState([]);
@@ -434,6 +450,7 @@ export default function NepseApp() {
   const [ovAnalysis, setOvAnalysis] = useState('');
   const [ovSig, setOvSig] = useState(null);
   const [ovLoading, setOvLoading] = useState(false);
+  const [ovBars, setOvBars] = useState(null); // price_history bars for the chart (redesign Phase A)
 
   // Trade forms
   const [buyTarget, setBuyTarget] = useState(null);
@@ -449,6 +466,8 @@ export default function NepseApp() {
   const [sysWlInput, setSysWlInput] = useState(''); // admin: add-to-curated-list input
   const [sigFilter, setSigFilter] = useState('ALL'); // Signals workspace: BUY/SELL/HOLD/AVOID chip filter
   const [sigSearch, setSigSearch] = useState(''); // Signals workspace: symbol search
+  const [sigSector, setSigSector] = useState('ALL'); // screener: sector filter (Phase F)
+  const [sigConfidence, setSigConfidence] = useState('ALL'); // screener: confidence filter (Phase F)
   const [toasts, setToasts] = useState([]);
   const [logs, setLogs] = useState([]); // ephemeral local notices
   const [showLog, setShowLog] = useState(false);
@@ -470,8 +489,13 @@ export default function NepseApp() {
   var filteredSignals = signals.filter(function (s) {
     if (sigFilter !== 'ALL' && s.signal !== sigFilter) return false;
     if (sigSearch && s.symbol.toUpperCase().indexOf(sigSearch.toUpperCase()) === -1) return false;
+    if (sigSector !== 'ALL' && (s.sector || 'Unknown') !== sigSector) return false;
+    if (sigConfidence !== 'ALL' && s.confidence !== sigConfidence) return false;
     return true;
   });
+  // Screener sector options: only sectors actually present in today's scanned
+  // signals — never a hardcoded/fabricated list.
+  var sigSectorOptions = Array.from(new Set(signals.map(function (s) { return s.sector || 'Unknown'; }))).sort();
   var alerts = openPos.reduce(function (arr, p) {
     var live = stockCache[p.symbol];
     var sigLive = signals.find(function (s) { return s.symbol === p.symbol && s.live; });
@@ -539,6 +563,66 @@ export default function NepseApp() {
     saveAlerts(Object.assign({}, alertPrefs, { thresholds: th }));
   }
 
+  // Per-user Telegram linking (Phase G reach) — nested under the Telegram channel
+  // row in Settings since a link code is only meaningful once that channel is on.
+  function requestTelegramLink() {
+    setTelegramLinking(true);
+    store.requestTelegramLink()
+      .then(function (info) { setTelegramLinkInfo(info); })
+      .catch(function (e) { showToast(e.message || 'Could not start Telegram linking', 'err'); })
+      .then(function () { setTelegramLinking(false); });
+  }
+  function unlinkTelegramNow() {
+    store.unlinkTelegram()
+      .then(function () { setAlertPrefs(function (p) { return Object.assign({}, p, { telegramLinked: false }); }); setTelegramLinkInfo(null); showToast('Telegram unlinked', 'info'); })
+      .catch(function (e) { showToast(e.message || 'Could not unlink', 'err'); });
+  }
+
+  // Browser push — connect/disconnect THIS device. Standard Push API calls;
+  // the actual encrypted delivery is server-side (src/lib/notify.js deliverPush,
+  // used by alertDelivery.js whenever the "push" channel is toggled on above).
+  function urlBase64ToUint8Array(base64url) {
+    var pad = '='.repeat((4 - (base64url.length % 4)) % 4);
+    var base64 = (base64url + pad).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = window.atob(base64);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function enablePush() {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      showToast('Push notifications are not supported in this browser', 'err'); return;
+    }
+    setPushBusy(true);
+    Notification.requestPermission()
+      .then(function (perm) {
+        if (perm !== 'granted') throw new Error('Notification permission denied');
+        return navigator.serviceWorker.ready;
+      })
+      .then(function (reg) { return store.getPushPublicKey().then(function (key) { return { reg: reg, key: key }; }); })
+      .then(function (r) {
+        if (!r.key) throw new Error('Push is not configured on this deployment yet');
+        return r.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(r.key) });
+      })
+      .then(function (sub) { return store.subscribePush(sub.toJSON()); })
+      .then(function () { setPushSubscribed(true); showToast('Push notifications connected on this device', 'ok'); })
+      .catch(function (e) { showToast(e.message || 'Could not enable push', 'err'); })
+      .then(function () { setPushBusy(false); });
+  }
+  function disablePush() {
+    setPushBusy(true);
+    navigator.serviceWorker.ready
+      .then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) {
+        if (!sub) return;
+        var endpoint = sub.endpoint;
+        return sub.unsubscribe().then(function () { return store.unsubscribePush(endpoint); });
+      })
+      .then(function () { setPushSubscribed(false); showToast('Push notifications disconnected', 'info'); })
+      .catch(function (e) { showToast(e.message || 'Could not disable push', 'err'); })
+      .then(function () { setPushBusy(false); });
+  }
+
   // Exchange is a personal VIEW preference: always device-local (so logged-out
   // visitors can switch markets to view) and additionally synced to the user's row
   // when signed in.
@@ -599,18 +683,44 @@ export default function NepseApp() {
       const data = await res.json();
       if (data && data.overall) setTrack(data);
     } catch (err) { console.error('track-record load failed:', err); }
+    // Index benchmark (verified, non-LLM — NEPSE only for now, see getVerifiedIndex).
+    // A view over the shared price_history bars, not a scan trigger.
+    if (exchange === 'NEPSE') {
+      try {
+        const r = await fetch('/api/price-history?symbol=NEPSE_INDEX&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' });
+        const d = await r.json();
+        setIndexBenchmark(Array.isArray(d.bars) ? d.bars : []);
+      } catch { setIndexBenchmark([]); }
+    } else {
+      setIndexBenchmark([]);
+    }
   }, [exchange]);
 
   // Reload the user's own positions (per-user table in 'api', localStorage in 'local',
   // empty when signed out). tradeLog is derived from the closed rows.
   const reloadPortfolio = useCallback(async () => {
     const mode = !auth.configured ? 'local' : (auth.signedIn ? 'api' : 'gated');
-    if (mode === 'gated') { setPortfolio([]); setTradeLog([]); return; }
+    if (mode === 'gated') { setPortfolio([]); setTradeLog([]); setPortfolioConcentration(null); return; }
     try {
       const rows = await store.loadPortfolio(mode, exchange);
       setPortfolio(rows.map(posFromRow));
       setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
     } catch (err) { console.error('portfolio load failed:', err); }
+    // Server-computed sector/symbol concentration (Phase C risk tools) — 'api' mode
+    // only; it needs sector data cross-referenced server-side and a signed-in token.
+    if (mode === 'api') {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('/api/portfolio/summary?exchange=' + encodeURIComponent(exchange), {
+          cache: 'no-store',
+          headers: token ? { Authorization: 'Bearer ' + token } : {},
+        });
+        const d = await res.json();
+        setPortfolioConcentration(d && d.ok ? d.concentration : null);
+      } catch { setPortfolioConcentration(null); }
+    } else {
+      setPortfolioConcentration(null);
+    }
   }, [auth.configured, auth.signedIn, exchange]);
 
   // -- status polling ---------------------------------------------------------
@@ -759,22 +869,19 @@ export default function NepseApp() {
     let alive = true;
     (async () => {
       if (mode === 'gated') {
-        if (alive) { setWatchlist([]); setWlSources({}); setPortfolio([]); setTradeLog([]); }
+        if (alive) { setWatchlist([]); setWlSources({}); setPortfolio([]); setTradeLog([]); setPortfolioConcentration(null); }
         return;
       }
       try {
         const wl = await store.loadWatchlist(mode, exchange);
         if (!alive) return;
         setWatchlist(wl.symbols); setWlSources(wl.sources);
-        const rows = await store.loadPortfolio(mode, exchange);
-        if (!alive) return;
-        setPortfolio(rows.map(posFromRow));
-        setTradeLog(rows.filter(function (r) { return String(r.status).toLowerCase() === 'closed'; }).map(tradeFromClosedRow));
+        if (alive) await reloadPortfolio();
       } catch (err) { console.error('user data load failed:', err); }
     })();
     return function () { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.loading, auth.configured, auth.signedIn, exchange]);
+  }, [auth.loading, auth.configured, auth.signedIn, exchange, reloadPortfolio]);
 
   // Load the GLOBAL curated/seed watchlist (per-exchange). PUBLIC — runs regardless of
   // auth mode (even signed-out / gated), because it is shared market data, not per-user
@@ -802,9 +909,19 @@ export default function NepseApp() {
     store.loadAlertPrefs(currentMode())
       .then(function (p) { if (alive) setAlertPrefs(p); })
       .catch(function () {});
+    if (currentMode() === 'api') {
+      store.getPushStatus().then(function (s) { if (alive) setPushSubscribed(s); }).catch(function () {});
+    }
     return function () { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, auth.loading, auth.configured, auth.signedIn]);
+
+  // Whether the SERVER has push configured at all (VAPID_PUBLIC_KEY set) — a
+  // capability check, runs once regardless of tab/auth so the Settings row
+  // knows whether to offer the feature.
+  useEffect(() => {
+    store.getPushPublicKey().then(function (k) { setPushEnabled(!!k); }).catch(function () {});
+  }, []);
 
   // -- actions ----------------------------------------------------------------
   // A scan is a SYSTEM/admin action: post to the admin-gated /api/admin/scan (which
@@ -904,7 +1021,11 @@ export default function NepseApp() {
   }
 
   function openStock(sym) {
-    setOvSym(sym); setOvData(null); setOvAnalysis(''); setOvSig(null); setOvLoading(true);
+    setOvSym(sym); setOvData(null); setOvAnalysis(''); setOvSig(null); setOvLoading(true); setOvBars(null);
+    fetch('/api/price-history?symbol=' + encodeURIComponent(sym) + '&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) { if (Array.isArray(res.bars)) setOvBars(res.bars); })
+      .catch(function () { /* chart just shows its own empty state */ });
     fetch('/api/stock?symbol=' + encodeURIComponent(sym) + '&exchange=' + encodeURIComponent(exchange), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (res) {
@@ -985,6 +1106,7 @@ export default function NepseApp() {
       signals: signals.slice(0, 12).map(function (s) { return { symbol: s.symbol, signal: s.signal, price: s.price }; }),
       watchlist: watchlist,
       market: market ? { index: market.index, change_pct: market.change_pct, sentiment: market.sentiment } : null,
+      exchange: exchange,
     };
     getAccessToken().then(function (token) {
       return fetch('/api/chat', {
@@ -1035,35 +1157,35 @@ export default function NepseApp() {
 
   // ---------------------------------------------------------------------------
   return (
-    <div className="app-shell" style={{ background: '#07090e', minHeight: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'IBM Plex Mono,monospace', color: '#c8d4e8', fontSize: 12 }}>
+    <div className="app-shell" style={{ background: 'var(--canvas)', minHeight: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'IBM Plex Mono,monospace', color: 'var(--text-secondary)', fontSize: 12 }}>
 
       {/* toasts */}
       <div style={{ position: 'fixed', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 400, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', alignItems: 'center' }}>
         {toasts.map(function (t) {
           var tc = t.t === 'err' ? '#ef4444' : t.t === 'info' ? '#3b82f6' : '#10b981';
-          return <div key={t.id} style={{ padding: '6px 14px', borderRadius: 20, background: '#0d1018', border: '1px solid ' + tc + '44', color: tc, fontSize: 10, fontFamily: 'Inter,sans-serif', whiteSpace: 'nowrap' }}>{t.msg}</div>;
+          return <div key={t.id} style={{ padding: '6px 14px', borderRadius: 20, background: 'var(--surface-raised)', border: '1px solid ' + tc + '44', color: tc, fontSize: 10, fontFamily: 'Inter,sans-serif', whiteSpace: 'nowrap' }}>{t.msg}</div>;
         })}
       </div>
 
       {/* ONBOARDING — first-run "which market do you trade?" step. Minimal +
           dismissible; sets the device-local exchange preference (ni:exchange). */}
       {showOnboard && (
-        <div className="modal-overlay" style={{ zIndex: 500, background: '#04060bdd' }}>
-          <div className="modal-panel" style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 14, padding: '22px 24px', maxWidth: 460 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', marginBottom: 4 }}>Which market do you trade?</div>
-            <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 16 }}>Pick your exchange — you can change it any time in Settings.</div>
+        <div className="modal-overlay" style={{ zIndex: 500, background: 'var(--overlay-backdrop)' }}>
+          <div className="modal-panel" style={{ background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 14, padding: '22px 24px', maxWidth: 460 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif', marginBottom: 4 }}>Which market do you trade?</div>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 16 }}>Pick your exchange — you can change it any time in Settings.</div>
             <div style={{ display: 'grid', gap: 8 }}>
               {Object.keys(EXCHANGES).map(function (exId) {
                 var ex = EXCHANGES[exId]; var avail = !!exAvail[exId];
                 return (
-                  <button key={exId} disabled={!avail} onClick={function () { if (avail) { saveExchange(exId); setShowOnboard(false); } }} style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid #1e2840', background: 'transparent', cursor: avail ? 'pointer' : 'not-allowed', opacity: avail ? 1 : 0.5, textAlign: 'left' }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>{ex.name} <span style={{ color: '#4a5568', fontWeight: 400 }}>{ex.currency}</span></div>
-                    <div style={{ fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace', marginTop: 3 }}>{avail ? ex.source + ' · ' + ex.hours : 'not enabled on this deployment'}</div>
+                  <button key={exId} disabled={!avail} onClick={function () { if (avail) { saveExchange(exId); setShowOnboard(false); } }} style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border-default)', background: 'transparent', cursor: avail ? 'pointer' : 'not-allowed', opacity: avail ? 1 : 0.5, textAlign: 'left' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif' }}>{ex.name} <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>{ex.currency}</span></div>
+                    <div style={{ fontSize: 9, color: 'var(--text-ghost)', fontFamily: 'IBM Plex Mono,monospace', marginTop: 3 }}>{avail ? ex.source + ' · ' + ex.hours : 'not enabled on this deployment'}</div>
                   </button>
                 );
               })}
             </div>
-            <button onClick={function () { saveExchange(exchange); setShowOnboard(false); }} style={{ marginTop: 14, fontSize: 10, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>skip — use {exchange}</button>
+            <button onClick={function () { saveExchange(exchange); setShowOnboard(false); }} style={{ marginTop: 14, fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>skip — use {exchange}</button>
           </div>
         </div>
       )}
@@ -1108,25 +1230,25 @@ export default function NepseApp() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
 
       {/* HEADER */}
-      <div style={{ background: '#07090e', borderBottom: '1px solid #141824', padding: '0 16px', flexShrink: 0 }}>
+      <div style={{ background: 'var(--canvas)', borderBottom: '1px solid var(--border-faint)', padding: '0 16px', flexShrink: 0 }}>
         {/* top bar */}
-        <div className="app-topbar" style={{ display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid #0f1420' }}>
+        <div className="app-topbar" style={{ display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid var(--border-subtle)' }}>
           {isMobile && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 7, height: 7, borderRadius: '50%', background: running ? '#f59e0b' : '#10b981', animation: running ? '_dot 1s ease infinite' : 'none' }} />
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', letterSpacing: '-.01em', fontFamily: 'Inter,sans-serif' }}>{exchange}</span>
-            <span style={{ fontSize: 10, color: '#2a3550', fontFamily: 'Inter,sans-serif' }}>Intelligence</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-.01em', fontFamily: 'Inter,sans-serif' }}>{exchange}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-ghost)', fontFamily: 'Inter,sans-serif' }}>Intelligence</span>
           </div>
           )}
           {market ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'IBM Plex Mono,monospace' }}>{market.index}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'IBM Plex Mono,monospace' }}>{market.index}</span>
               <span style={{ fontSize: 10, color: market.change_pct >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{toPct(market.change_pct)}</span>
               <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: market.sentiment === 'BULLISH' ? '#10b98122' : market.sentiment === 'BEARISH' ? '#ef444422' : '#f59e0b22', color: market.sentiment === 'BULLISH' ? '#10b981' : market.sentiment === 'BEARISH' ? '#ef4444' : '#f59e0b' }}><Term k={market.sentiment}>{market.sentiment}</Term></span>
             </div>
           ) : (
-            <div style={{ padding: '3px 10px', background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 6 }}>
-              <span style={{ fontSize: 9, color: '#4a5568' }}>{running ? 'scanning ' + (scanPhase || '') + (scanSym ? ' ' + scanSym : '') + '...' : signals.length + ' signals ready'}</span>
+            <div style={{ padding: '3px 10px', background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 6 }}>
+              <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{running ? 'scanning ' + (scanPhase || '') + (scanSym ? ' ' + scanSym : '') + '...' : signals.length + ' signals ready'}</span>
             </div>
           )}
           <div className="topbar-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1134,14 +1256,14 @@ export default function NepseApp() {
             {stalled && auth.isAdmin && (
               <button onClick={retryScan} style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid #ef4444', background: '#ef444415', color: '#ef4444', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>retry</button>
             )}
-            {openPos.length > 0 && <span style={{ fontSize: 10, color: '#4a5568', fontFamily: 'Inter,sans-serif' }}>{openPos.length + ' open'}</span>}
+            {openPos.length > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'Inter,sans-serif' }}>{openPos.length + ' open'}</span>}
             {realisedPL !== 0 && <span style={{ fontSize: 10, fontWeight: 500, color: realisedPL >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{signed(realisedPL)}</span>}
             {/* Scan is an admin/system action (triggers the ONE global scan) —
                 admin-only. The schedule indicator below stays visible to everyone. */}
             {auth.isAdmin && (
-              <button onClick={scanNow} disabled={running || scanStarting} style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid ' + (running ? '#1e2840' : '#3b82f6'), background: running ? 'transparent' : '#3b82f615', color: running ? '#4a5568' : '#3b82f6', fontSize: 10, cursor: running ? 'default' : 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{running ? 'scanning…' : scanStarting ? 'starting…' : 'scan'}</button>
+              <button onClick={scanNow} disabled={running || scanStarting} style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid ' + (running ? 'var(--border-default)' : '#3b82f6'), background: running ? 'transparent' : '#3b82f615', color: running ? 'var(--text-faint)' : '#3b82f6', fontSize: 10, cursor: running ? 'default' : 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{running ? 'scanning…' : scanStarting ? 'starting…' : 'scan'}</button>
             )}
-            <button onClick={function () { setShowLog(function (v) { return !v; }); }} style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid #1e2840', background: showLog ? '#1e2840' : 'transparent', color: showLog ? '#e2e8f0' : '#4a5568', fontSize: 9, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', display: 'flex', alignItems: 'center', gap: 4 }}>{running && <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#f59e0b', animation: '_dot 1s ease infinite', display: 'inline-block' }} />}{'activity'}</button>
+            <button onClick={function () { setShowLog(function (v) { return !v; }); }} style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border-default)', background: showLog ? 'var(--border-default)' : 'transparent', color: showLog ? 'var(--text-primary)' : 'var(--text-faint)', fontSize: 9, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', display: 'flex', alignItems: 'center', gap: 4 }}>{running && <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#f59e0b', animation: '_dot 1s ease infinite', display: 'inline-block' }} />}{'activity'}</button>
             {/* Persistent, non-intrusive sign-in (only when Google auth is configured).
                 Sign-in saves YOUR watchlist/positions; viewing is free either way. */}
             {auth.configured && !auth.loading && !auth.signedIn && (
@@ -1159,23 +1281,23 @@ export default function NepseApp() {
           <div style={{ flex: 1 }} />
           {isMobile && (
             <>
-              <div style={{ width: 1, height: 20, background: '#1e2840', margin: '0 6px' }} />
+              <div style={{ width: 1, height: 20, background: 'var(--border-default)', margin: '0 6px' }} />
               <button onClick={function () { setTab('settings'); }} title="Settings" aria-label="Settings" style={{ padding: '0 10px', height: 38, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: tab === 'settings' ? '2px solid #3b82f6' : '2px solid transparent' }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={tab === 'settings' ? '#e2e8f0' : '#4a5568'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={tab === 'settings' ? 'var(--text-primary)' : 'var(--text-faint)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="3" />
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                 </svg>
               </button>
             </>
           )}
-          <button onClick={function () { setSidebarOpen(function (v) { return !v; }); }} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px', height: 34, border: '1px solid ' + (sidebarOpen ? '#3b82f6' : '#1e2840'), borderRadius: 7, background: sidebarOpen ? '#3b82f610' : 'transparent', cursor: 'pointer', marginLeft: 4 }}>
-            <span style={{ fontSize: 11, color: sidebarOpen ? '#3b82f6' : '#4a5568', fontFamily: 'Inter,sans-serif', fontWeight: 500 }}>Ask</span>
-            <span style={{ fontSize: 10, color: sidebarOpen ? '#3b82f6' : '#2a3550' }}>{sidebarOpen ? 'x' : ''}</span>
+          <button onClick={function () { setSidebarOpen(function (v) { return !v; }); }} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px', height: 34, border: '1px solid ' + (sidebarOpen ? '#3b82f6' : 'var(--border-default)'), borderRadius: 7, background: sidebarOpen ? '#3b82f610' : 'transparent', cursor: 'pointer', marginLeft: 4 }}>
+            <span style={{ fontSize: 11, color: sidebarOpen ? '#3b82f6' : 'var(--text-faint)', fontFamily: 'Inter,sans-serif', fontWeight: 500 }}>Ask</span>
+            <span style={{ fontSize: 10, color: sidebarOpen ? '#3b82f6' : 'var(--text-ghost)' }}>{sidebarOpen ? 'x' : ''}</span>
           </button>
         </div>
         {/* schedule indicator */}
         {(status && (status.last_scan_at || status.next_scheduled)) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 9, color: 'var(--text-ghost)', fontFamily: 'IBM Plex Mono,monospace' }}>
             {status.last_scan_at ? <span title={new Date(status.last_scan_at).toLocaleString()}>last scan {timeAgo(status.last_scan_at)} ago</span> : <span>no scans yet</span>}
             {status.next_scheduled && <><span>·</span><span title={new Date(status.next_scheduled).toLocaleString()}>next {new Date(status.next_scheduled).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></>}
           </div>
@@ -1187,22 +1309,22 @@ export default function NepseApp() {
 
       {/* ACTIVITY PANEL */}
       {showLog && (
-        <div style={{ background: '#060810', borderBottom: '1px solid #141824', maxHeight: 320, overflowY: 'auto', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderBottom: '1px solid #0f1420', position: 'sticky', top: 0, background: '#060810', zIndex: 10 }}>
+        <div style={{ background: 'var(--surface-deep)', borderBottom: '1px solid var(--border-faint)', maxHeight: 320, overflowY: 'auto', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderBottom: '1px solid var(--border-subtle)', position: 'sticky', top: 0, background: 'var(--surface-deep)', zIndex: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 5, height: 5, borderRadius: '50%', background: running ? '#f59e0b' : '#2a3550', animation: running ? '_dot 1s ease infinite' : 'none' }} />
-              <span style={{ fontSize: 10, fontWeight: 500, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Agent Activity</span>
-              <span style={{ fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace' }}>{activity.length + logs.length + ' entries'}</span>
+              <div style={{ width: 5, height: 5, borderRadius: '50%', background: running ? '#f59e0b' : 'var(--text-ghost)', animation: running ? '_dot 1s ease infinite' : 'none' }} />
+              <span style={{ fontSize: 10, fontWeight: 500, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif' }}>Agent Activity</span>
+              <span style={{ fontSize: 9, color: 'var(--text-ghost)', fontFamily: 'IBM Plex Mono,monospace' }}>{activity.length + logs.length + ' entries'}</span>
             </div>
-            <button onClick={loadActivity} style={{ fontSize: 9, color: '#2a3550', background: 'none', border: '1px solid #1e2840', borderRadius: 3, padding: '2px 7px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>refresh</button>
+            <button onClick={loadActivity} style={{ fontSize: 9, color: 'var(--text-ghost)', background: 'none', border: '1px solid var(--border-default)', borderRadius: 3, padding: '2px 7px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>refresh</button>
           </div>
-          {(activity.length + logs.length) === 0 && <div style={{ fontSize: 10, color: '#2a3550', padding: '12px 16px', fontFamily: 'IBM Plex Mono,monospace' }}>no activity yet _ run a scan to populate this</div>}
+          {(activity.length + logs.length) === 0 && <div style={{ fontSize: 10, color: 'var(--text-ghost)', padding: '12px 16px', fontFamily: 'IBM Plex Mono,monospace' }}>no activity yet _ run a scan to populate this</div>}
           {/* local ephemeral notices first */}
           {logs.map(function (l, i) {
-            var lc = l.t === 'ok' ? '#10b981' : l.t === 'err' ? '#ef4444' : l.t === 'api' ? '#3b82f6' : '#8899b4';
+            var lc = l.t === 'ok' ? '#10b981' : l.t === 'err' ? '#ef4444' : l.t === 'api' ? '#3b82f6' : 'var(--text-muted)';
             return (
-              <div key={'local-' + i} style={{ display: 'flex', gap: 8, padding: '5px 16px', alignItems: 'flex-start', borderTop: '1px solid #0a0c14' }}>
-                <span style={{ color: '#2a3550', flexShrink: 0, fontSize: 9, marginTop: 1 }}>{new Date(l.ts).toLocaleTimeString([], { hour12: false })}</span>
+              <div key={'local-' + i} style={{ display: 'flex', gap: 8, padding: '5px 16px', alignItems: 'flex-start', borderTop: '1px solid var(--border-hairline)' }}>
+                <span style={{ color: 'var(--text-ghost)', flexShrink: 0, fontSize: 9, marginTop: 1 }}>{new Date(l.ts).toLocaleTimeString([], { hour12: false })}</span>
                 <span style={{ fontSize: 10, color: lc, flex: 1, lineHeight: 1.4 }}>{l.msg}</span>
               </div>
             );
@@ -1210,19 +1332,19 @@ export default function NepseApp() {
           {/* durable server events */}
           {activity.map(function (a, i) {
             var msg = a.message || a.type || '';
-            var lc = /fail|error|skip/i.test(msg) ? '#ef4444' : a.type === 'signal' ? '#f59e0b' : /complete|started|done/i.test(msg) ? '#10b981' : '#8899b4';
+            var lc = /fail|error|skip/i.test(msg) ? '#ef4444' : a.type === 'signal' ? '#f59e0b' : /complete|started|done/i.test(msg) ? '#10b981' : 'var(--text-muted)';
             var hasDetail = a.data && Object.keys(a.data).length > 0;
             var isExpanded = logExpanded[i];
             return (
-              <div key={a.id || 'ev-' + i} style={{ borderTop: '1px solid #0a0c14' }}>
-                <div onClick={function () { if (hasDetail) setLogExpanded(function (prev) { var u = Object.assign({}, prev); u[i] = !u[i]; return u; }); }} style={{ display: 'flex', gap: 8, padding: '5px 16px', alignItems: 'flex-start', cursor: hasDetail ? 'pointer' : 'default', background: isExpanded ? '#0b0e16' : 'transparent' }}>
-                  <span style={{ color: '#2a3550', flexShrink: 0, fontSize: 9, marginTop: 1 }}>{a.created_at ? new Date(a.created_at).toLocaleTimeString([], { hour12: false }) : ''}</span>
+              <div key={a.id || 'ev-' + i} style={{ borderTop: '1px solid var(--border-hairline)' }}>
+                <div onClick={function () { if (hasDetail) setLogExpanded(function (prev) { var u = Object.assign({}, prev); u[i] = !u[i]; return u; }); }} style={{ display: 'flex', gap: 8, padding: '5px 16px', alignItems: 'flex-start', cursor: hasDetail ? 'pointer' : 'default', background: isExpanded ? 'var(--surface)' : 'transparent' }}>
+                  <span style={{ color: 'var(--text-ghost)', flexShrink: 0, fontSize: 9, marginTop: 1 }}>{a.created_at ? new Date(a.created_at).toLocaleTimeString([], { hour12: false }) : ''}</span>
                   <span style={{ fontSize: 10, color: lc, flex: 1, lineHeight: 1.4 }}>{msg}</span>
-                  {hasDetail && <span style={{ fontSize: 8, color: '#2a3550', flexShrink: 0, marginTop: 1 }}>{isExpanded ? '^' : 'v'}</span>}
+                  {hasDetail && <span style={{ fontSize: 8, color: 'var(--text-ghost)', flexShrink: 0, marginTop: 1 }}>{isExpanded ? '^' : 'v'}</span>}
                 </div>
                 {isExpanded && hasDetail && (
-                  <div style={{ padding: '8px 16px 8px 38px', background: '#0b0e16', borderTop: '1px solid #0f1420' }}>
-                    <pre style={{ fontSize: 9, color: '#8899b4', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'IBM Plex Mono,monospace', margin: 0 }}>{JSON.stringify(a.data, null, 2)}</pre>
+                  <div style={{ padding: '8px 16px 8px 38px', background: 'var(--surface)', borderTop: '1px solid var(--border-subtle)' }}>
+                    <pre style={{ fontSize: 9, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'IBM Plex Mono,monospace', margin: 0 }}>{JSON.stringify(a.data, null, 2)}</pre>
                   </div>
                 )}
               </div>
@@ -1235,7 +1357,7 @@ export default function NepseApp() {
           stall (instead of an endless silent poll) + a retry that re-pokes the worker.
           Non-admins see the message only; the auto-reclaim path still runs server-side. */}
       {stalled && (
-        <div style={{ background: '#3a1a1a', borderBottom: '1px solid #ef444455', color: '#ef4444', padding: '8px 16px', fontSize: 11, fontFamily: 'Inter,sans-serif', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ background: 'var(--negative-banner-bg)', borderBottom: '1px solid #ef444455', color: '#ef4444', padding: '8px 16px', fontSize: 11, fontFamily: 'Inter,sans-serif', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span>{'⚠ Scan appears stalled — no progress at ' + (progressLabel || '0/0') + '.'}</span>
           {auth.isAdmin
             ? <button onClick={retryScan} style={{ fontSize: 10, color: '#ef4444', background: '#ef444418', border: '1px solid #ef4444', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>retry now</button>
@@ -1245,7 +1367,7 @@ export default function NepseApp() {
 
       {/* partial-scan banner */}
       {isPartial && (failedJobs.length > 0 || skippedJobs.length > 0) && (
-        <div style={{ background: '#3a2c10', borderBottom: '1px solid #f59e0b55', color: '#f59e0b', padding: '8px 16px', fontSize: 11, fontFamily: 'Inter,sans-serif' }}>
+        <div style={{ background: 'var(--warning-banner-bg)', borderBottom: '1px solid #f59e0b55', color: '#f59e0b', padding: '8px 16px', fontSize: 11, fontFamily: 'Inter,sans-serif' }}>
           {'⚠ Partial scan — '}
           {failedJobs.length > 0 && failedJobs.length + ' failed' + (skippedJobs.length ? ', ' : '. ')}
           {skippedJobs.length > 0 && skippedJobs.length + ' skipped (AI quota). '}
@@ -1272,7 +1394,7 @@ export default function NepseApp() {
                         <div style={{ width: 6, height: 6, borderRadius: '50%', background: isTarget ? '#10b981' : '#ef4444', animation: '_dot 1s ease infinite' }} />
                         <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 12, fontWeight: 600, color: isTarget ? '#10b981' : '#ef4444', fontFamily: 'Inter,sans-serif' }}>{isTarget ? 'Target hit' : 'Stop-loss breached'}</div>
-                          <div style={{ fontSize: 11, color: '#c8d4e8', marginTop: 1 }}>{a.msg}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>{a.msg}</div>
                         </div>
                         <button onClick={function () { var pos = portfolio.find(function (p) { return p.symbol === a.symbol && p.status === 'OPEN'; }); if (pos) { setSellTarget(pos.id); setSellPrice(String(a.price)); } setTab('positions'); }} style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid ' + (isTarget ? '#10b981' : '#ef4444'), background: 'transparent', color: isTarget ? '#10b981' : '#ef4444', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{isTarget ? 'take profit' : 'exit now'}</button>
                       </div>
@@ -1291,10 +1413,10 @@ export default function NepseApp() {
               <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr', gap: dsSpacing.md, marginBottom: dsSpacing.md, alignItems: 'start' }}>
                 <div>
                   {brief ? (
-                    <div style={card(brief.mood === 'POSITIVE' ? '#10b981' : brief.mood === 'CAUTIOUS' ? '#f59e0b' : '#1c2333')}>
+                    <div style={card(brief.mood === 'POSITIVE' ? '#10b981' : brief.mood === 'CAUTIOUS' ? '#f59e0b' : 'var(--border-alt)')}>
                       <SectionHeader title="AI Daily Brief" mb={8} />
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', marginBottom: 6, lineHeight: 1.4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{brief.headline}</div>
-                      {(brief.market_note || brief.summary) && <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 3, fontFamily: 'IBM Plex Sans,sans-serif', lineHeight: 1.6 }}>{brief.market_note || brief.summary}</div>}
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6, lineHeight: 1.4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{brief.headline}</div>
+                      {(brief.market_note || brief.summary) && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 3, fontFamily: 'IBM Plex Sans,sans-serif', lineHeight: 1.6 }}>{brief.market_note || brief.summary}</div>}
                       {brief.portfolio_flag && <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 3 }}>! {brief.portfolio_flag}</div>}
                       {Array.isArray(brief.topPicks) && brief.topPicks.length > 0 && <div style={{ fontSize: 11, color: '#10b981', marginBottom: 3 }}>top picks: {brief.topPicks.join(', ')}</div>}
                       {brief.top_action && <div style={{ fontSize: 11, color: '#3b82f6' }}>-&gt; {brief.top_action}</div>}
@@ -1305,14 +1427,14 @@ export default function NepseApp() {
                       <SectionHeader title="AI Daily Brief" mb={8} />
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                         <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', animation: '_dot 1s ease infinite' }} />
-                        <span style={{ fontSize: 10, color: '#4a5568' }}>{scanPhase === 'market' ? 'fetching ' + exchange + ' market...' : scanSym ? 'scanning ' + scanSym : 'scan in progress...'}</span>
+                        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{scanPhase === 'market' ? 'fetching ' + exchange + ' market...' : scanSym ? 'scanning ' + scanSym : 'scan in progress...'}</span>
                       </div>
                       {ghost(55)}{ghost(75)}{ghost(40)}
                     </div>
                   ) : (
                     <div style={card()}>
                       <SectionHeader title="AI Daily Brief" mb={8} />
-                      <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 8 }}>
                         {'No brief yet — here is what the verified data currently shows.'}
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginBottom: 8 }}>
@@ -1322,7 +1444,7 @@ export default function NepseApp() {
                       </div>
                       {auth.isAdmin
                         ? <button onClick={scanNow} style={btn('#3b82f6')}>run scan now</button>
-                        : <div style={{ fontSize: 10, color: '#4a5568' }}>The agent scans on a schedule — the brief appears here.</div>}
+                        : <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>The agent scans on a schedule — the brief appears here.</div>}
                     </div>
                   )}
                 </div>
@@ -1331,16 +1453,16 @@ export default function NepseApp() {
 
               {/* discovered-today banner */}
               {signals.filter(function (s) { return s.source === 'discovered'; }).length > 0 && (
-                <div style={{ background: '#0d1018', border: '1px solid #10b98133', borderRadius: 8, padding: '10px 14px', marginBottom: 8 }}>
+                <div style={{ background: 'var(--surface-raised)', border: '1px solid #10b98133', borderRadius: 8, padding: '10px 14px', marginBottom: 8 }}>
                   <div style={{ fontSize: 9, color: '#10b981', letterSpacing: '.08em', marginBottom: 6 }}>AUTO-DISCOVERED TODAY</div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     {signals.filter(function (s) { return s.source === 'discovered'; }).map(function (s) {
-                      var sc = SIG_COLORS[s.signal] || '#4a5568';
+                      var sc = SIG_COLORS[s.signal] || 'var(--text-faint)';
                       return (
-                        <div key={s.symbol} onClick={function () { openStock(s.symbol); }} style={{ background: '#080a0f', border: '1px solid ' + sc + '44', borderRadius: 5, padding: '5px 10px', cursor: 'pointer' }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</span>
+                        <div key={s.symbol} onClick={function () { openStock(s.symbol); }} style={{ background: 'var(--surface-sunken)', border: '1px solid ' + sc + '44', borderRadius: 5, padding: '5px 10px', cursor: 'pointer' }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>{s.symbol}</span>
                           <span style={{ fontSize: 9, color: sc, marginLeft: 6 }}>{s.signal}</span>
-                          {s.live && <span style={{ fontSize: 9, color: '#4a5568', marginLeft: 4 }}>{'Rs' + s.live.price}</span>}
+                          {s.live && <span style={{ fontSize: 9, color: 'var(--text-faint)', marginLeft: 4 }}>{'Rs' + s.live.price}</span>}
                         </div>
                       );
                     })}
@@ -1356,13 +1478,13 @@ export default function NepseApp() {
                 return (
                   <div key={s.id} style={card(sc)}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{s.symbol}</span>
                       <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 6px', borderRadius: 3 }}><Term k={s.signal}>{s.signal}</Term></span>
-                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568' }}><Term k="confidence">{s.confidence}</Term></span>
+                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : 'var(--text-faint)' }}><Term k="confidence">{s.confidence}</Term></span>
                       {s.live && <span style={{ fontSize: 8, color: '#10b981', background: '#10b98118', padding: '1px 5px', borderRadius: 2 }}>{'Rs' + s.live.price}</span>}
                       {s.source === 'discovered' && <span style={{ fontSize: 8, color: '#a78bfa', background: '#a78bfa18', padding: '1px 5px', borderRadius: 2 }}>discovered</span>}
                     </div>
-                    <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: 'var(--surface-sunken)', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
                     <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginBottom: 8 }}>
                       {sbox('entry', s.entry, null, 'entry')}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444', 'stop')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981', 'target')}
                     </div>
@@ -1380,7 +1502,7 @@ export default function NepseApp() {
                 );
               })}
               {signals.length === 0 && !running && (
-                <div style={{ textAlign: 'center', padding: '40px 20px', color: '#4a5568' }}>
+                <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-faint)' }}>
                   <div style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>This is where the agent&apos;s daily BUY / HOLD / SELL reads appear — research it shows its work on, not advice.</div>
                   {auth.isAdmin ? (
                     <>
@@ -1407,46 +1529,49 @@ export default function NepseApp() {
               {openPos.length > 0 && (
                 <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
                   {[['open', '' + openPos.length, null], ['deployed', toRs(openPos.reduce(function (s, p) { return s + p.net; }, 0)), null], ['realised', signed(realisedPL), realisedPL >= 0 ? '#10b981' : '#ef4444'], ['win %', closedSells.length ? Math.round(closedSells.filter(function (t) { return (t.npl || 0) > 0; }).length / closedSells.length * 100) + '%' : '-', '#3b82f6']].map(function (item) {
-                    return <div key={item[0]} style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 6, padding: '8px 10px' }}><div style={{ fontSize: 9, color: '#4a5568', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3 }}>{item[0]}</div><div style={{ fontSize: 16, fontWeight: 600, color: item[2] || '#e2e8f0' }}>{item[1]}</div></div>;
+                    return <div key={item[0]} style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-alt)', borderRadius: 6, padding: '8px 10px' }}><div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3 }}>{item[0]}</div><div style={{ fontSize: 16, fontWeight: 600, color: item[2] || 'var(--text-primary)' }}>{item[1]}</div></div>;
                   })}
                 </div>
               )}
+              {portfolioConcentration && (
+                <ConcentrationBars bySector={portfolioConcentration.bySector} threshold={portfolioConcentration.threshold} overConcentrated={portfolioConcentration.overConcentrated} />
+              )}
               {gated
                 ? <SignInPrompt title="Sign in to track your positions" sub="Log your buys and sells to see invested amount, break-even and live P&L. Your positions are private to your account." onSignIn={auth.signIn} />
-                : (openPos.length === 0 && closedSells.length === 0 && <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11, lineHeight: 1.6 }}><div style={{ maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>No open positions yet. Log a buy from a signal to track your invested amount, break-even and live net-of-charges P&amp;L here — this is your own record, not a real order.</div></div>)}
+                : (openPos.length === 0 && closedSells.length === 0 && <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-faint)', fontSize: 11, lineHeight: 1.6 }}><div style={{ maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>No open positions yet. Log a buy from a signal to track your invested amount, break-even and live net-of-charges P&amp;L here — this is your own record, not a real order.</div></div>)}
               {openPos.map(function (p) {
                 var live = stockCache[p.symbol];
                 var sigLive = signals.find(function (s) { return s.symbol === p.symbol && s.live; });
                 var lp = live ? live.price : (sigLive && sigLive.live ? sigLive.live.price : null);
                 var unr = lp ? (lp - p.price) * p.qty : null; var noSL = !p.sl;
                 var sig = signals.find(function (s) { return s.symbol === p.symbol; });
-                var sigC = sig ? (SIG_COLORS[sig.signal] || '#4a5568') : null;
+                var sigC = sig ? (SIG_COLORS[sig.signal] || 'var(--text-faint)') : null;
                 return (
                   <div key={p.id} style={card(noSL && daysAgo(p.date) > 3 ? '#ef4444' : '#10b981')}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{p.symbol}</span>
-                      <span style={{ fontSize: 10, color: '#4a5568' }}>{p.qty + 'u @ Rs' + p.price}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{p.symbol}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{p.qty + 'u @ Rs' + p.price}</span>
                       {sig && sigC && <span style={{ fontSize: 9, fontWeight: 700, color: sigC, background: sigC + '20', padding: '1px 5px', borderRadius: 3 }}>{sig.signal}</span>}
-                      {lp && <span style={{ fontSize: 10, color: '#e2e8f0' }}>{'live Rs' + lp}</span>}
+                      {lp && <span style={{ fontSize: 10, color: 'var(--text-primary)' }}>{'live Rs' + lp}</span>}
                       {unr !== null && <span style={{ fontSize: 10, color: unr >= 0 ? '#10b981' : '#ef4444' }}>{(unr >= 0 ? '+' : '') + toRs(unr)}</span>}
-                      <span style={{ marginLeft: 'auto', fontSize: 9, color: '#4a5568' }}>{'day ' + daysAgo(p.date)}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--text-faint)' }}>{'day ' + daysAgo(p.date)}</span>
                     </div>
                     <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5, marginBottom: 8 }}>
                       {sbox('invested', toRs(p.net))}{sbox('break-even', p.be ? 'Rs ' + p.be.toFixed(0) : '-')}{sbox('stop loss', p.sl ? 'Rs ' + p.sl : 'NOT SET', noSL ? '#ef4444' : null)}{sbox('target', p.target ? 'Rs ' + p.target : '-', p.target ? '#10b981' : null)}
                     </div>
-                    {p.basis && <div style={{ fontSize: 10, color: '#1c2333', fontStyle: 'italic', marginBottom: 6 }}>{'"' + p.basis + '"'}</div>}
+                    {p.basis && <div style={{ fontSize: 10, color: 'var(--border-alt)', fontStyle: 'italic', marginBottom: 6 }}>{'"' + p.basis + '"'}</div>}
                     {noSL && <div style={{ fontSize: 10, color: '#ef4444', marginBottom: 6 }}>no stop-loss set</div>}
                     {sellTarget === p.id ? (
-                      <div style={{ background: '#080a0f', borderRadius: 6, padding: 10, border: '1px solid #1c2333' }}>
+                      <div style={{ background: 'var(--surface-sunken)', borderRadius: 6, padding: 10, border: '1px solid var(--border-alt)' }}>
                         <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                          <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>sell price <span style={{ color: '#ef4444' }}>*</span></div><input value={sellPrice} onChange={function (e) { setSellPrice(e.target.value); }} type="number" placeholder={lp ? String(lp) : 'current'} /></div>
+                          <div><div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>sell price <span style={{ color: '#ef4444' }}>*</span></div><input value={sellPrice} onChange={function (e) { setSellPrice(e.target.value); }} type="number" placeholder={lp ? String(lp) : 'current'} /></div>
                           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                            {sellPrice && <div style={{ fontSize: 10, color: '#4a5568' }}>net: <span style={{ color: calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>{signed(calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl)}</span></div>}
+                            {sellPrice && <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>net: <span style={{ color: calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>{signed(calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl)}</span></div>}
                           </div>
                         </div>
-                        <div style={{ marginBottom: 8 }}><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>why selling? <span style={{ color: '#ef4444' }}>required</span></div><input value={sellReason} onChange={function (e) { setSellReason(e.target.value); }} placeholder="target hit / stop-loss / thesis changed" /></div>
+                        <div style={{ marginBottom: 8 }}><div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>why selling? <span style={{ color: '#ef4444' }}>required</span></div><input value={sellReason} onChange={function (e) { setSellReason(e.target.value); }} placeholder="target hit / stop-loss / thesis changed" /></div>
                         {sellPrice && (
-                          <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8, padding: '6px 8px', background: '#0d1018', borderRadius: 4 }}>
+                          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 8, padding: '6px 8px', background: 'var(--surface-raised)', borderRadius: 4 }}>
                             {'gross ' + signed(calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).gpl) + ' charges ' + toRs2(calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).tot) + ' net '}
                             <span style={{ color: calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>{signed(calcC('SELL', p.qty, parseFloat(sellPrice), p.price, daysAgo(p.date)).npl)}</span>
                           </div>
@@ -1468,11 +1593,28 @@ export default function NepseApp() {
               })}
               {closedSells.length > 0 && (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 9, color: '#4a5568', letterSpacing: '.08em', marginBottom: 8 }}>CLOSED TRADES</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ fontSize: 9, color: 'var(--text-faint)', letterSpacing: '.08em' }}>CLOSED TRADES</div>
+                    <button onClick={function () {
+                      const csv = toCsv(closedSells, [
+                        { label: 'Symbol', key: 'symbol' },
+                        { label: 'Closed Date', key: 'date' },
+                        { label: 'Qty', key: 'qty' },
+                        { label: 'Buy Price', key: 'buyPrice' },
+                        { label: 'Sell Price', key: 'price' },
+                        { label: 'Hold Days', key: 'holdDays' },
+                        { label: 'Gross P&L', key: 'gpl' },
+                        { label: 'CGT', key: 'cgt' },
+                        { label: 'Charges', key: 'tot' },
+                        { label: 'Net P&L', key: 'npl' },
+                      ]);
+                      downloadCsv(exchange + '-closed-trades-' + new Date().toISOString().slice(0, 10) + '.csv', csv);
+                    }} style={btn('#3b82f6', true)}>export CSV</button>
+                  </div>
                   {closedSells.map(function (t) {
-                    return <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 10px', background: '#0d1018', border: '1px solid #1c2333', borderLeft: '2px solid ' + (t.npl >= 0 ? '#10b981' : '#ef4444'), borderRadius: 6, marginBottom: 5 }}>
-                      <div><span style={{ fontSize: 12, fontWeight: 500, color: '#e2e8f0' }}>{t.symbol}</span><div style={{ fontSize: 9, color: '#4a5568' }}>{t.qty + 'u Rs' + t.price + ' ' + t.holdDays + 'd'}</div></div>
-                      <div style={{ marginLeft: 'auto', textAlign: 'right' }}><div style={{ fontSize: 12, fontWeight: 600, color: t.npl >= 0 ? '#10b981' : '#ef4444' }}>{signed(t.npl)}</div><div style={{ fontSize: 9, color: '#4a5568' }}>{'charges ' + toRs2(t.tot)}</div></div>
+                    return <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 10px', background: 'var(--surface-raised)', border: '1px solid var(--border-alt)', borderLeft: '2px solid ' + (t.npl >= 0 ? '#10b981' : '#ef4444'), borderRadius: 6, marginBottom: 5 }}>
+                      <div><span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>{t.symbol}</span><div style={{ fontSize: 9, color: 'var(--text-faint)' }}>{t.qty + 'u Rs' + t.price + ' ' + t.holdDays + 'd'}</div></div>
+                      <div style={{ marginLeft: 'auto', textAlign: 'right' }}><div style={{ fontSize: 12, fontWeight: 600, color: t.npl >= 0 ? '#10b981' : '#ef4444' }}>{signed(t.npl)}</div><div style={{ fontSize: 9, color: 'var(--text-faint)' }}>{'charges ' + toRs2(t.tot)}</div></div>
                     </div>;
                   })}
                 </div>
@@ -1509,10 +1651,24 @@ export default function NepseApp() {
                   })}
                 </div>
                 <input value={sigSearch} onChange={function (e) { setSigSearch(e.target.value); }} placeholder="Search symbol…" style={{ flex: '1 1 140px', minWidth: 120, fontSize: dsText.small, padding: '6px 10px', borderRadius: dsRadius.md, border: '1px solid ' + dsColor.border, background: dsColor.surface, color: dsColor.textPrimary, fontFamily: dsFont.mono }} />
+                {/* screener filters (Phase F) — sector + confidence, over the same already-loaded signals */}
+                <select value={sigSector} onChange={function (e) { setSigSector(e.target.value); }} style={{ fontSize: dsText.small, padding: '6px 8px', borderRadius: dsRadius.md, border: '1px solid ' + dsColor.border, background: dsColor.surface, color: dsColor.textPrimary, fontFamily: dsFont.ui }}>
+                  <option value="ALL">All sectors</option>
+                  {sigSectorOptions.map(function (sec) { return <option key={sec} value={sec}>{sec}</option>; })}
+                </select>
+                <select value={sigConfidence} onChange={function (e) { setSigConfidence(e.target.value); }} style={{ fontSize: dsText.small, padding: '6px 8px', borderRadius: dsRadius.md, border: '1px solid ' + dsColor.border, background: dsColor.surface, color: dsColor.textPrimary, fontFamily: dsFont.ui }}>
+                  <option value="ALL">Any confidence</option>
+                  <option value="HIGH">High confidence</option>
+                  <option value="MEDIUM">Medium confidence</option>
+                  <option value="LOW">Low confidence</option>
+                </select>
+                {(sigSector !== 'ALL' || sigConfidence !== 'ALL' || sigFilter !== 'ALL' || sigSearch) && (
+                  <button onClick={function () { setSigFilter('ALL'); setSigSearch(''); setSigSector('ALL'); setSigConfidence('ALL'); }} style={btn()}>clear</button>
+                )}
                 {auth.isAdmin && <button onClick={scanNow} disabled={running || scanStarting} style={btn('#3b82f6')}>{running ? 'scanning...' : 'fresh scan'}</button>}
               </div>
               {signals.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '50px 20px', color: '#4a5568', fontSize: 11 }}>
+                <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-faint)', fontSize: 11 }}>
                   <div style={{ marginBottom: 12, lineHeight: 1.6, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>Signals are the agent&apos;s BUY / HOLD / SELL reads on the stocks it scanned — educational, not advice. You decide and place any trade yourself.</div>
                   {auth.isAdmin
                     ? <>no signals yet<br /><br /><button onClick={scanNow} style={btn('#3b82f6')}>scan now</button></>
@@ -1521,39 +1677,39 @@ export default function NepseApp() {
               )}
               {signals.length > 0 && filteredSignals.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '40px 20px', color: dsColor.textFaint, fontSize: dsText.body }}>
-                  {'No signals match ' + (sigFilter !== 'ALL' ? sigFilter : '') + (sigSearch ? ' "' + sigSearch + '"' : '') + '.'}
+                  No signals match your filters.
                   <div style={{ marginTop: 8 }}>
-                    <button onClick={function () { setSigFilter('ALL'); setSigSearch(''); }} style={btn('#3b82f6')}>clear filters</button>
+                    <button onClick={function () { setSigFilter('ALL'); setSigSearch(''); setSigSector('ALL'); setSigConfidence('ALL'); }} style={btn('#3b82f6')}>clear filters</button>
                   </div>
                 </div>
               )}
               {filteredSignals.map(function (s) {
-                var sc = SIG_COLORS[s.signal] || '#4a5568'; var d = s.live;
+                var sc = SIG_COLORS[s.signal] || 'var(--text-faint)'; var d = s.live;
                 var isHeld = openPos.find(function (p) { return p.symbol === s.symbol; });
                 return (
                   <div key={s.id} style={card(sc)}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{s.symbol}</span>
                       <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 6px', borderRadius: 3 }}><Term k={s.signal}>{s.signal}</Term></span>
-                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568' }}><Term k="confidence">{s.confidence}</Term></span>
+                      <span style={{ fontSize: 9, color: s.confidence === 'HIGH' ? '#10b981' : s.confidence === 'MEDIUM' ? '#f59e0b' : 'var(--text-faint)' }}><Term k="confidence">{s.confidence}</Term></span>
                       {d && <span style={{ fontSize: 8, color: '#10b981', background: '#10b98118', padding: '1px 5px', borderRadius: 2 }}>{'Rs' + d.price}</span>}
                       {s.source === 'discovered' && <span style={{ fontSize: 8, color: '#a78bfa', background: '#a78bfa18', padding: '1px 5px', borderRadius: 2 }}>discovered</span>}
                       {isHeld && <span style={{ fontSize: 9, color: '#8b5cf6', background: '#8b5cf622', padding: '1px 5px', borderRadius: 3 }}>held</span>}
                       {s.outcome && s.outcome !== 'PENDING' && <span style={{ fontSize: 9, color: s.outcome === 'WIN' ? '#10b981' : '#ef4444', background: (s.outcome === 'WIN' ? '#10b981' : '#ef4444') + '22', padding: '1px 5px', borderRadius: 3 }}>{s.outcome}</span>}
-                      <span style={{ fontSize: 9, color: '#1c2333', marginLeft: 'auto' }}>{timeAgo(s.at)}</span>
+                      <span style={{ fontSize: 9, color: 'var(--border-alt)', marginLeft: 'auto' }}>{timeAgo(s.at)}</span>
                     </div>
                     {d && (
-                      <div style={{ display: 'flex', gap: 10, padding: '5px 8px', background: '#080a0f', borderRadius: 4, marginBottom: 6, flexWrap: 'wrap' }}>
-                        <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{'Rs ' + d.price}</span>
+                      <div style={{ display: 'flex', gap: 10, padding: '5px 8px', background: 'var(--surface-sunken)', borderRadius: 4, marginBottom: 6, flexWrap: 'wrap' }}>
+                        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{'Rs ' + d.price}</span>
                         {d.change_pct != null && <span style={{ fontSize: 10, color: d.change_pct >= 0 ? '#10b981' : '#ef4444' }}>{toPct(d.change_pct)}</span>}
-                        {(d.pe != null || d.eps != null) && <span style={{ fontSize: 9, color: '#4a5568' }}>{(d.eps != null ? 'EPS ' + d.eps + ' ' : '') + (d.pe != null ? 'PE ' + d.pe : '')}</span>}
+                        {(d.pe != null || d.eps != null) && <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{(d.eps != null ? 'EPS ' + d.eps + ' ' : '') + (d.pe != null ? 'PE ' + d.pe : '')}</span>}
                         {/* Freshness of the VERIFIED quote (ground-truth provenance): when it
                             was read + a stale flag for a late-but-true (accepted) price. */}
-                        {d.asOf != null && <span style={{ fontSize: 9, color: '#4a5568', marginLeft: 'auto' }}>{asOfLabel(d.asOf)}</span>}
+                        {d.asOf != null && <span style={{ fontSize: 9, color: 'var(--text-faint)', marginLeft: 'auto' }}>{asOfLabel(d.asOf)}</span>}
                         {d.stale && <span style={{ fontSize: 8, color: '#f59e0b', background: '#f59e0b18', padding: '1px 5px', borderRadius: 2 }}>stale</span>}
                       </div>
                     )}
-                    <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: 'var(--surface-sunken)', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{s.why}</div>
                     <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5, marginBottom: 8 }}>
                       {sbox('entry', s.entry, null, 'entry')}{sbox('stop loss', s.sl ? 'Rs ' + s.sl : '-', '#ef4444', 'stop')}{sbox('target', s.target ? 'Rs ' + s.target : '-', '#10b981', 'target')}{sbox('hold', s.hold)}
                     </div>
@@ -1580,15 +1736,15 @@ export default function NepseApp() {
             <div className="fadeup">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <SectionHeader title="Track Record" sub="real, verified WIN/LOSS history — losses included. Past performance ≠ future results." mb={0} />
-                <button onClick={loadTrack} style={{ fontSize: 9, color: '#2a3550', background: 'none', border: '1px solid #1e2840', borderRadius: 3, padding: '3px 8px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', flexShrink: 0 }}>refresh</button>
+                <button onClick={loadTrack} style={{ fontSize: 9, color: 'var(--text-ghost)', background: 'none', border: '1px solid var(--border-default)', borderRadius: 3, padding: '3px 8px', cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', flexShrink: 0 }}>refresh</button>
               </div>
 
               {!track ? (
-                <div style={{ fontSize: 11, color: '#4a5568', padding: '16px 0' }}>Loading…</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '16px 0' }}>Loading…</div>
               ) : track.overall.trades === 0 ? (
-                <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '20px 18px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 12, color: '#c8d4e8', marginBottom: 6 }}>No resolved outcomes yet.</div>
-                  <div style={{ fontSize: 10, color: '#4a5568' }}>As BUY/SELL signals hit their target or stop-loss, the real record builds here.{track.pending ? ' ' + track.pending + ' pending.' : ''}</div>
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '20px 18px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>No resolved outcomes yet.</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>As BUY/SELL signals hit their target or stop-loss, the real record builds here.{track.pending ? ' ' + track.pending + ' pending.' : ''}</div>
                 </div>
               ) : (
                 <>
@@ -1599,57 +1755,81 @@ export default function NepseApp() {
                       // Net-of-charges is the HEADLINE; gross is shown alongside (TIER-1 #3).
                       { l: 'avg net', v: fmtRet(track.overall.avgNetReturn), c: track.overall.avgNetReturn >= 0 ? '#10b981' : '#ef4444', t: 'net' },
                       { l: 'avg gross', v: fmtRet(track.overall.avgReturn), c: track.overall.avgReturn >= 0 ? '#10b981' : '#ef4444', t: 'gross' },
-                      { l: 'record', v: track.overall.wins + 'W / ' + track.overall.losses + 'L', c: '#e2e8f0' },
+                      { l: 'record', v: track.overall.wins + 'W / ' + track.overall.losses + 'L', c: 'var(--text-primary)' },
                       { l: 'expired', v: String(track.expired ? track.expired.count : 0), c: '#c08a2c' },
-                      { l: 'pending', v: String(track.pending), c: '#4a5568' },
+                      { l: 'pending', v: String(track.pending), c: 'var(--text-faint)' },
                     ].map(function (x) {
                       return (
-                        <div key={x.l} style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px' }}>
+                        <div key={x.l} style={{ background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 10, padding: '10px 12px' }}>
                           <div style={{ fontSize: 16, fontWeight: 600, color: x.c, fontFamily: 'IBM Plex Mono,monospace' }}>{x.v}</div>
-                          <div style={{ fontSize: 9, color: '#4a5568', marginTop: 2, fontFamily: 'Inter,sans-serif' }}>{x.t ? <Term k={x.t}>{x.l}</Term> : x.l}</div>
+                          <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 2, fontFamily: 'Inter,sans-serif' }}>{x.t ? <Term k={x.t}>{x.l}</Term> : x.l}</div>
                         </div>
                       );
                     })}
                   </div>
 
+                  {exchange === 'NEPSE' && indexBenchmark && indexBenchmark.length >= 2 && (
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, fontFamily: 'Inter,sans-serif' }}>Index benchmark</div>
+                      <IndexBenchmark bars={indexBenchmark} track={track} />
+                    </div>
+                  )}
+
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                     {['BUY', 'SELL'].map(function (d) {
                       var s = track.byDirection[d];
                       return (
-                        <div key={d} style={{ flex: 1, background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px' }}>
+                        <div key={d} style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 10, padding: '10px 12px' }}>
                           <div style={{ fontSize: 10, fontWeight: 600, color: d === 'BUY' ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace', marginBottom: 4 }}>{d}</div>
-                          <div style={{ fontSize: 10, color: '#8899b4' }}>{s.trades ? (fmtRate(s.winRate) + ' win · ' + s.wins + 'W/' + s.losses + 'L · net ' + fmtRet(s.avgNetReturn) + ' / gross ' + fmtRet(s.avgReturn)) : 'no trades yet'}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{s.trades ? (fmtRate(s.winRate) + ' win · ' + s.wins + 'W/' + s.losses + 'L · net ' + fmtRet(s.avgNetReturn) + ' / gross ' + fmtRet(s.avgReturn)) : 'no trades yet'}</div>
                         </div>
                       );
                     })}
                   </div>
 
                   {track.bySector.length > 0 && (
-                    <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', marginBottom: 8, fontFamily: 'Inter,sans-serif' }}>By sector (confidence-ranked)</div>
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, fontFamily: 'Inter,sans-serif' }}>By sector (confidence-ranked)</div>
                       {track.bySector.map(function (s) {
                         return (
-                          <div key={s.sector} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #0f1420' }}>
-                            <span style={{ fontSize: 10, color: '#8899b4', fontFamily: 'Inter,sans-serif' }}>{s.sector}</span>
-                            <span style={{ fontSize: 10, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{fmtRate(s.winRate)} · {s.wins + 'W/' + s.losses + 'L'} · {fmtRet(s.avgReturn)}</span>
+                          <div key={s.sector} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'Inter,sans-serif' }}>{s.sector}</span>
+                            <span style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'IBM Plex Mono,monospace' }}>{fmtRate(s.winRate)} · {s.wins + 'W/' + s.losses + 'L'} · {fmtRet(s.avgReturn)}</span>
                           </div>
                         );
                       })}
                     </div>
                   )}
 
-                  <div style={{ fontSize: 10, fontWeight: 600, color: '#c8d4e8', margin: '4px 0 8px', fontFamily: 'Inter,sans-serif' }}>Recent outcomes <span style={{ fontWeight: 400, color: '#4a5568' }}>· return shown NET of NEPSE charges</span></div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 0 8px' }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', fontFamily: 'Inter,sans-serif' }}>Recent outcomes <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>· return shown NET of NEPSE charges</span></div>
+                    <button onClick={function () {
+                      const csv = toCsv(track.recent, [
+                        { label: 'Symbol', key: 'symbol' },
+                        { label: 'Signal', key: 'signal' },
+                        { label: 'Sector', key: 'sector' },
+                        { label: 'Entry', key: 'entry' },
+                        { label: 'Exit', key: 'exit' },
+                        { label: 'Outcome', key: 'outcome' },
+                        { label: 'Exit Reason', key: 'exitReason' },
+                        { label: 'Gross Return %', key: 'returnPct' },
+                        { label: 'Net Return %', key: 'netReturnPct' },
+                        { label: 'Resolved At', key: 'at' },
+                      ]);
+                      downloadCsv(exchange + '-track-record-' + new Date().toISOString().slice(0, 10) + '.csv', csv);
+                    }} style={btn('#3b82f6', true)}>export CSV</button>
+                  </div>
                   {track.recent.map(function (r, i) {
                     // WIN green · LOSS red · EXPIRE (time-stop) amber — the honest mix.
                     var oc = r.outcome === 'WIN' ? '#10b981' : r.outcome === 'EXPIRE' ? '#c08a2c' : '#ef4444';
                     // Net-of-charges is the headline figure; fall back to gross when absent.
                     var shownRet = r.netReturnPct != null ? r.netReturnPct : r.returnPct;
                     return (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid #0f1420' }}>
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                         <span style={{ fontSize: 9, fontWeight: 700, color: oc, background: oc + '22', padding: '1px 5px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace', width: 42, textAlign: 'center' }}>{r.outcome}</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', minWidth: 56 }}>{r.symbol}</span>
-                        <span style={{ fontSize: 9, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{r.signal}{r.exitReason ? ' · ' + r.exitReason : ''}</span>
-                        <span style={{ fontSize: 9, color: '#4a5568', fontFamily: 'IBM Plex Mono,monospace' }}>{(r.entry != null ? 'Rs' + r.entry : '-') + '→' + (r.exit != null ? 'Rs' + r.exit : '-')}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif', minWidth: 56 }}>{r.symbol}</span>
+                        <span style={{ fontSize: 9, color: 'var(--text-faint)', fontFamily: 'IBM Plex Mono,monospace' }}>{r.signal}{r.exitReason ? ' · ' + r.exitReason : ''}</span>
+                        <span style={{ fontSize: 9, color: 'var(--text-faint)', fontFamily: 'IBM Plex Mono,monospace' }}>{(r.entry != null ? 'Rs' + r.entry : '-') + '→' + (r.exit != null ? 'Rs' + r.exit : '-')}</span>
                         <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, color: (shownRet || 0) >= 0 ? '#10b981' : '#ef4444', fontFamily: 'IBM Plex Mono,monospace' }}>{shownRet != null ? fmtRet(shownRet) : '-'}</span>
                       </div>
                     );
@@ -1669,20 +1849,20 @@ export default function NepseApp() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
                   {failedJobs.map(function (j) {
                     return (
-                      <div key={'f-' + j.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#0d1018', border: '1px solid #ef444433', borderRadius: 8 }}>
+                      <div key={'f-' + j.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--surface-raised)', border: '1px solid #ef444433', borderRadius: 8 }}>
                         <span style={{ flexShrink: 0, background: '#ef4444', color: '#fff', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4 }}>FAILED</span>
-                        <strong style={{ flexShrink: 0, color: '#e2e8f0' }}>{j.symbol}</strong>
-                        <span style={{ color: '#4a5568', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.message}>{j.message}{j.attempt > 1 ? ' (after ' + j.attempt + ' tries)' : ''}</span>
+                        <strong style={{ flexShrink: 0, color: 'var(--text-primary)' }}>{j.symbol}</strong>
+                        <span style={{ color: 'var(--text-faint)', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.message}>{j.message}{j.attempt > 1 ? ' (after ' + j.attempt + ' tries)' : ''}</span>
                         <button onClick={function () { retryStock(j.symbol); }} style={btn('#3b82f6', true)}>retry</button>
                       </div>
                     );
                   })}
                   {skippedJobs.map(function (j) {
                     return (
-                      <div key={'s-' + j.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#0d1018', border: '1px solid #f59e0b33', borderRadius: 8 }}>
+                      <div key={'s-' + j.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--surface-raised)', border: '1px solid #f59e0b33', borderRadius: 8 }}>
                         <span style={{ flexShrink: 0, background: '#f59e0b', color: '#1a1303', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4 }}>SKIPPED</span>
-                        <strong style={{ flexShrink: 0, color: '#e2e8f0' }}>{j.symbol}</strong>
-                        <span style={{ color: '#4a5568', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.message}>{j.message}</span>
+                        <strong style={{ flexShrink: 0, color: 'var(--text-primary)' }}>{j.symbol}</strong>
+                        <span style={{ color: 'var(--text-faint)', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.message}>{j.message}</span>
                         <button onClick={function () { retryStock(j.symbol); }} style={btn('#3b82f6', true)}>retry</button>
                       </div>
                     );
@@ -1697,7 +1877,7 @@ export default function NepseApp() {
               {(systemWatchlist.length > 0 || auth.isAdmin) && (
                 <div style={{ marginBottom: 16 }}>
                   <SectionHeader title="Curated Watchlist" sub="scanned for everyone" mb={6} />
-                  <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8, lineHeight: 1.6 }}>A global list the agent monitors for all users — separate from your own watchlist above.</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 8, lineHeight: 1.6 }}>A global list the agent monitors for all users — separate from your own watchlist above.</div>
                   {auth.isAdmin && (
                     <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                       <input value={sysWlInput} onChange={function (e) { setSysWlInput(e.target.value.toUpperCase()); }} onKeyDown={function (e) { if (e.key === 'Enter') { curateSystemWatch('add', sysWlInput); setSysWlInput(''); } }} placeholder="admin: add to curated list…" style={{ flex: 1 }} />
@@ -1705,20 +1885,20 @@ export default function NepseApp() {
                     </div>
                   )}
                   {systemWatchlist.length === 0 ? (
-                    <div style={{ fontSize: 11, color: '#4a5568', padding: '8px 0' }}>No curated symbols yet for this market.</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '8px 0' }}>No curated symbols yet for this market.</div>
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 6 }}>
                       {systemWatchlist.map(function (row) {
                         var sym = row.symbol;
                         var sig = signals.find(function (s) { return s.symbol === sym; });
-                        var sc = sig ? (SIG_COLORS[sig.signal] || '#4a5568') : '#1c2333';
+                        var sc = sig ? (SIG_COLORS[sig.signal] || 'var(--text-faint)') : 'var(--border-alt)';
                         var srcC = srcColor(row.source);
                         var lp = sig && sig.live ? sig.live.price : null;
                         return (
-                          <div key={'sys-' + sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
+                          <div key={'sys-' + sym} style={{ background: 'var(--surface-raised)', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                              <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
-                              {auth.isAdmin && <button onClick={function () { curateSystemWatch('deactivate', sym); }} title="deactivate (admin)" aria-label={'Remove ' + sym + ' from curated watchlist'} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>}
+                              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
+                              {auth.isAdmin && <button onClick={function () { curateSystemWatch('deactivate', sym); }} title="deactivate (admin)" aria-label={'Remove ' + sym + ' from curated watchlist'} style={{ fontSize: 9, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
                               <span style={{ fontSize: 8, color: srcC }}>{row.source}</span>
@@ -1726,9 +1906,9 @@ export default function NepseApp() {
                             {sig ? (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                 <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 5px', borderRadius: 2 }}>{sig.signal}</span>
-                                {lp && <span style={{ fontSize: 9, color: '#4a5568' }}>{'Rs' + lp}</span>}
+                                {lp && <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{'Rs' + lp}</span>}
                               </div>
-                            ) : <span style={{ fontSize: 9, color: '#4a5568' }}>{running && scanSym === sym ? 'scanning...' : 'pending'}</span>}
+                            ) : <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{running && scanSym === sym ? 'scanning...' : 'pending'}</span>}
                           </div>
                         );
                       })}
@@ -1746,20 +1926,20 @@ export default function NepseApp() {
                 <button onClick={function () { addToWatchlist(wlInput, 'manual'); setWlInput(''); }} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #10b981', background: 'transparent', color: '#10b981', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', flexShrink: 0 }}>add</button>
               </div>
               {watchlist.length === 0 ? (
-                <div style={{ fontSize: 11, color: '#4a5568', padding: '20px 0' }}>Watchlist empty. Add a symbol above to track it — the agent scans your watchlist plus daily discovery each run.</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '20px 0' }}>Watchlist empty. Add a symbol above to track it — the agent scans your watchlist plus daily discovery each run.</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 6, marginBottom: 16 }}>
                   {watchlist.map(function (sym) {
                     var sig = signals.find(function (s) { return s.symbol === sym; });
-                    var sc = sig ? (SIG_COLORS[sig.signal] || '#4a5568') : '#1c2333';
+                    var sc = sig ? (SIG_COLORS[sig.signal] || 'var(--text-faint)') : 'var(--border-alt)';
                     var src = wlSources[sym] || 'manual';
                     var srcC = srcColor(src);
                     var lp = sig && sig.live ? sig.live.price : null;
                     return (
-                      <div key={sym} style={{ background: '#0d1018', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
+                      <div key={sym} style={{ background: 'var(--surface-raised)', border: '1px solid ' + sc + '55', borderRadius: 6, padding: '8px 10px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
-                          <button onClick={function () { removeFromWatchlist(sym); }} aria-label={'Remove ' + sym + ' from your watchlist'} style={{ fontSize: 9, color: '#4a5568', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }} onClick={function () { openStock(sym); }}>{sym}</span>
+                          <button onClick={function () { removeFromWatchlist(sym); }} aria-label={'Remove ' + sym + ' from your watchlist'} style={{ fontSize: 9, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>x</button>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
                           <span style={{ fontSize: 8, color: srcC }}>{src}</span>
@@ -1767,9 +1947,9 @@ export default function NepseApp() {
                         {sig ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                             <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: sc + '20', padding: '1px 5px', borderRadius: 2 }}>{sig.signal}</span>
-                            {lp && <span style={{ fontSize: 9, color: '#4a5568' }}>{'Rs' + lp}</span>}
+                            {lp && <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{'Rs' + lp}</span>}
                           </div>
-                        ) : <span style={{ fontSize: 9, color: '#4a5568' }}>{running && scanSym === sym ? 'scanning...' : 'pending'}</span>}
+                        ) : <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{running && scanSym === sym ? 'scanning...' : 'pending'}</span>}
                       </div>
                     );
                   })}
@@ -1794,21 +1974,27 @@ export default function NepseApp() {
                     // an unavailable market is shown disabled with the reason.
                     var disabled = !exAvail[exId];
                     return (
-                      <button key={exId} onClick={function () { if (!disabled) saveExchange(exId); }} disabled={disabled} style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid ' + (active ? '#3b82f6' : '#1e2840'), background: active ? '#3b82f60e' : 'transparent', cursor: disabled ? 'not-allowed' : 'pointer', textAlign: 'left', opacity: disabled ? 0.6 : 1 }}>
+                      <button key={exId} onClick={function () { if (!disabled) saveExchange(exId); }} disabled={disabled} style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid ' + (active ? '#3b82f6' : 'var(--border-default)'), background: active ? '#3b82f60e' : 'transparent', cursor: disabled ? 'not-allowed' : 'pointer', textAlign: 'left', opacity: disabled ? 0.6 : 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? '#3b82f6' : '#2a3550' }} />
-                          <span style={{ fontSize: 12, fontWeight: active ? 600 : 400, color: active ? '#e2e8f0' : '#4a5568', fontFamily: 'Inter,sans-serif' }}>{ex.name}</span>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? '#3b82f6' : 'var(--text-ghost)' }} />
+                          <span style={{ fontSize: 12, fontWeight: active ? 600 : 400, color: active ? 'var(--text-primary)' : 'var(--text-faint)', fontFamily: 'Inter,sans-serif' }}>{ex.name}</span>
                         </div>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingLeft: 16 }}>
-                          <span style={{ fontSize: 9, color: active ? '#3b82f6' : '#2a3550', background: active ? '#3b82f615' : '#0f1420', padding: '2px 6px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{ex.currency}</span>
-                          <span style={{ fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace' }}>{ex.hours}</span>
-                          <span style={{ fontSize: 9, color: '#2a3550', fontFamily: 'IBM Plex Mono,monospace' }}>{ex.source}</span>
+                          <span style={{ fontSize: 9, color: active ? '#3b82f6' : 'var(--text-ghost)', background: active ? '#3b82f615' : 'var(--border-subtle)', padding: '2px 6px', borderRadius: 3, fontFamily: 'IBM Plex Mono,monospace' }}>{ex.currency}</span>
+                          <span style={{ fontSize: 9, color: 'var(--text-ghost)', fontFamily: 'IBM Plex Mono,monospace' }}>{ex.hours}</span>
+                          <span style={{ fontSize: 9, color: 'var(--text-ghost)', fontFamily: 'IBM Plex Mono,monospace' }}>{ex.source}</span>
                         </div>
                         {disabled && <div style={{ marginTop: 6, paddingLeft: 16, fontSize: 9, color: '#f59e0b', fontFamily: 'Inter,sans-serif' }}>not enabled on this deployment</div>}
                       </button>
                     );
                   })}
                 </div>
+              </SectionCard>
+
+              {/* Theme — personal preference, device-local (never synced). Only the
+                  neutral palette changes; semantic status colors stay constant. */}
+              <SectionCard icon="th" iconColor={dsColor.discovery} title="Theme" subtitle="Personal preference — this device only">
+                <SegBtn value={theme} onChange={setTheme} options={[['dark', 'Dark'], ['light', 'Light'], ['system', 'System']]} />
               </SectionCard>
 
               {/* Account / admin sign-in (only when Google auth is configured) */}
@@ -1822,13 +2008,13 @@ export default function NepseApp() {
                 <SignInPrompt title="Sign in to set alert preferences" sub="Choose how the agent notifies you and which signals trigger an alert. Your preferences are private to your account." onSignIn={auth.signIn} />
               ) : (
                 <SectionCard icon="!" iconColor={dsColor.warning} title="My Alerts" subtitle="How the agent notifies you when a signal fires">
-                  {[['email', 'Email'], ['telegram', 'Telegram']].map(function (c) {
+                  {[['email', 'Email'], ['telegram', 'Telegram'], ['push', 'Browser Push']].map(function (c) {
                     var chInfo = channelMap[c[0]];
                     var needsSetup = chInfo && channelNeedsSetup(!!alertPrefs.channels[c[0]], chInfo.configured);
                     return (
-                      <div key={c[0]} style={{ padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
+                      <div key={c[0]} style={{ padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{c[1]}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'Inter,sans-serif' }}>{c[1]}</div>
                           <ToggleBtn on={!!alertPrefs.channels[c[0]]} onClick={function () { toggleAlertChannel(c[0]); }} />
                         </div>
                         {/* Non-blocking warning: the toggle still works, but the channel can't
@@ -1838,13 +2024,60 @@ export default function NepseApp() {
                             {c[1] + " isn't set up on the server yet — alerts won't send until an admin configures " + (chInfo.requiresEnv || []).join(' + ') + '.'}
                           </div>
                         )}
+                        {/* Per-user Telegram linking — nested here because it's only
+                            meaningful once this channel is toggled on (CLAUDE.md
+                            dependent-action rule). */}
+                        {c[0] === 'telegram' && alertPrefs.channels.telegram && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--canvas)', borderRadius: 6, border: '1px solid var(--border-alt)' }}>
+                            {alertPrefs.telegramLinked ? (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: '#10b981' }}>Telegram chat linked</span>
+                                <button onClick={unlinkTelegramNow} style={btn('#ef4444', true)}>unlink</button>
+                              </div>
+                            ) : telegramLinkInfo ? (
+                              <div>
+                                <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                                  {telegramLinkInfo.botUsername
+                                    ? <>Open <a href={'https://t.me/' + telegramLinkInfo.botUsername + '?start=' + telegramLinkInfo.code} target="_blank" rel="noreferrer" style={{ color: '#3b82f6' }}>this Telegram link</a> to connect.</>
+                                    : <>Message the bot <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{'/start ' + telegramLinkInfo.code}</span> to connect.</>}
+                                </div>
+                                <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>{'Code ' + telegramLinkInfo.code + ' expires in 15 minutes.'}</div>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Not linked yet — alerts can&apos;t deliver here.</span>
+                                <button onClick={requestTelegramLink} disabled={telegramLinking} style={btn('#3b82f6', true)}>{telegramLinking ? 'starting…' : 'link telegram'}</button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {/* Per-device push connection — nested here because it's only
+                            meaningful once this channel is toggled on (CLAUDE.md
+                            dependent-action rule), same shape as Telegram linking above. */}
+                        {c[0] === 'push' && alertPrefs.channels.push && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--canvas)', borderRadius: 6, border: '1px solid var(--border-alt)' }}>
+                            {!pushEnabled ? (
+                              <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Browser push isn&apos;t available on this deployment yet.</span>
+                            ) : pushSubscribed ? (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: '#10b981' }}>This device is connected</span>
+                                <button onClick={disablePush} disabled={pushBusy} style={btn('#ef4444', true)}>{pushBusy ? '…' : 'disconnect'}</button>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Not connected yet — alerts can&apos;t reach this device.</span>
+                                <button onClick={enablePush} disabled={pushBusy} style={btn('#3b82f6', true)}>{pushBusy ? 'connecting…' : 'connect device'}</button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                   {[['onBuy', 'Alert on BUY signals'], ['onSell', 'Alert on SELL signals']].map(function (t) {
                     return (
-                      <div key={t[0]} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
-                        <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>{t[1]}</div>
+                      <div key={t[0]} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'Inter,sans-serif' }}>{t[1]}</div>
                         <ToggleBtn on={!!alertPrefs.thresholds[t[0]]} onClick={function () { toggleAlertThreshold(t[0]); }} />
                       </div>
                     );
@@ -1870,17 +2103,17 @@ export default function NepseApp() {
               {/* Discovery */}
               <SectionCard icon="@" iconColor={dsColor.positive} title="Auto-Discovery" subtitle="Scans NEPSE market movers, finds best signals"
                 right={<div style={{ marginLeft: 'auto' }}><ToggleBtn on={settings.discovery_on} onClick={function () { saveSettings(Object.assign({}, settings, { discovery_on: !settings.discovery_on })); }} /></div>}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #0f1420' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div>
-                    <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Discovery depth</div>
-                    <div style={{ fontSize: 10, color: '#4a5568', marginTop: 2 }}>Stocks to deep-scan from market movers each run</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'Inter,sans-serif' }}>Discovery depth</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>Stocks to deep-scan from market movers each run</div>
                   </div>
                   <SegBtn value={settings.discovery_depth} options={[5, 8, 12]} onChange={function (n) { saveSettings(Object.assign({}, settings, { discovery_depth: n })); }} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
                   <div>
-                    <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Auto-add threshold</div>
-                    <div style={{ fontSize: 10, color: '#4a5568', marginTop: 2 }}>Repeatedly-watched (HOLD) symbols are auto-promoted into the curated watchlist scanned for everyone</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'Inter,sans-serif' }}>Auto-add threshold</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>Repeatedly-watched (HOLD) symbols are auto-promoted into the curated watchlist scanned for everyone</div>
                   </div>
                   <SegBtn value={settings.autoadd_threshold} options={[['BUY', 'BUY only'], ['BUY_WATCH', 'BUY + WATCH']]} onChange={function (v) { saveSettings(Object.assign({}, settings, { autoadd_threshold: v })); }} />
                 </div>
@@ -1891,8 +2124,8 @@ export default function NepseApp() {
                 right={<div style={{ marginLeft: 'auto' }}><ToggleBtn on={settings.autoremove_on} onClick={function () { saveSettings(Object.assign({}, settings, { autoremove_on: !settings.autoremove_on })); }} /></div>}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
                   <div>
-                    <div style={{ fontSize: 11, color: '#c8d4e8', fontFamily: 'Inter,sans-serif' }}>Remove after N stale scans</div>
-                    <div style={{ fontSize: 10, color: '#4a5568', marginTop: 2 }}>Consecutive NEUTRAL or AVOID before stock is dropped</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'Inter,sans-serif' }}>Remove after N stale scans</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>Consecutive NEUTRAL or AVOID before stock is dropped</div>
                   </div>
                   <SegBtn value={settings.autoremove_after} options={[2, 3, 5]} onChange={function (n) { saveSettings(Object.assign({}, settings, { autoremove_after: n })); }} />
                 </div>
@@ -1904,12 +2137,12 @@ export default function NepseApp() {
                   {SECTORS.map(function (s) {
                     var on = settings.sector_focus[s];
                     return (
-                      <button key={s} onClick={function () { var sf = Object.assign({}, settings.sector_focus); sf[s] = !sf[s]; saveSettings(Object.assign({}, settings, { sector_focus: sf })); }} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid ' + (on ? '#3b82f655' : '#1e2840'), background: on ? '#3b82f60e' : 'transparent', color: on ? '#3b82f6' : '#4a5568', cursor: 'pointer', textAlign: 'left' }}>
+                      <button key={s} onClick={function () { var sf = Object.assign({}, settings.sector_focus); sf[s] = !sf[s]; saveSettings(Object.assign({}, settings, { sector_focus: sf })); }} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid ' + (on ? '#3b82f655' : 'var(--border-default)'), background: on ? '#3b82f60e' : 'transparent', color: on ? '#3b82f6' : 'var(--text-faint)', cursor: 'pointer', textAlign: 'left' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: on ? '#3b82f6' : '#2a3550' }} />
+                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: on ? '#3b82f6' : 'var(--text-ghost)' }} />
                           <span style={{ fontSize: 11, fontWeight: on ? 600 : 400, fontFamily: 'Inter,sans-serif' }}>{SECTOR_LABELS[s]}</span>
                         </div>
-                        <div style={{ fontSize: 9, color: on ? '#3b82f688' : '#2a3550', marginLeft: 12 }}>{on ? 'included in discovery' : 'excluded'}</div>
+                        <div style={{ fontSize: 9, color: on ? '#3b82f688' : 'var(--text-ghost)', marginLeft: 12 }}>{on ? 'included in discovery' : 'excluded'}</div>
                       </button>
                     );
                   })}
@@ -1917,19 +2150,19 @@ export default function NepseApp() {
               </SectionCard>
 
               {/* Scan profile summary */}
-              <div style={{ background: 'linear-gradient(135deg,#0b0e16 0%,#0d1220 100%)', border: '1px solid #1e2840', borderRadius: 12, padding: '16px 18px' }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', marginBottom: 12 }}>Current scan profile</div>
+              <div style={{ background: 'linear-gradient(135deg,var(--surface) 0%,var(--surface-raised) 100%)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif', marginBottom: 12 }}>Current scan profile</div>
                 <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 14 }}>
-                  {[['Watchlist stocks', watchlist.length, '#c8d4e8'], ['+ Discovered', settings.discovery_depth, '#a78bfa'], ['Total scanned', watchlist.length + settings.discovery_depth, '#10b981']].map(function (item) {
+                  {[['Watchlist stocks', watchlist.length, 'var(--text-secondary)'], ['+ Discovered', settings.discovery_depth, '#a78bfa'], ['Total scanned', watchlist.length + settings.discovery_depth, '#10b981']].map(function (item) {
                     return (
-                      <div key={item[0]} style={{ background: '#07090e', borderRadius: 8, padding: '10px 12px', border: '1px solid #141824' }}>
+                      <div key={item[0]} style={{ background: 'var(--canvas)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-faint)' }}>
                         <div style={{ fontSize: 18, fontWeight: 700, color: item[2], fontFamily: 'IBM Plex Mono,monospace', marginBottom: 3 }}>{item[1]}</div>
-                        <div style={{ fontSize: 9, color: '#4a5568' }}>{item[0]}</div>
+                        <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>{item[0]}</div>
                       </div>
                     );
                   })}
                 </div>
-                <div style={{ background: '#07090e', borderRadius: 8, padding: '10px 14px', border: '1px solid #141824', fontSize: 10, color: '#4a5568', lineHeight: 1.9 }}>
+                <div style={{ background: 'var(--canvas)', borderRadius: 8, padding: '10px 14px', border: '1px solid var(--border-faint)', fontSize: 10, color: 'var(--text-faint)', lineHeight: 1.9 }}>
                   Scans now run server-side (cron + manual). The agent fetches the market, discovers movers, scans each stock, then writes a brief — crash-safe and within the daily AI budget.
                 </div>
               </div>
@@ -1942,14 +2175,14 @@ export default function NepseApp() {
         {/* ASK SIDEBAR */}
         {sidebarOpen && (
           <div style={isMobile
-            ? { position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', background: '#07090e', paddingBottom: 'env(safe-area-inset-bottom)' }
-            : { width: 300, borderLeft: '1px solid #141824', display: 'flex', flexDirection: 'column', background: '#07090e', flexShrink: 0 }}>
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid #141824', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            ? { position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', background: 'var(--canvas)', paddingBottom: 'env(safe-area-inset-bottom)' }
+            : { width: 300, borderLeft: '1px solid var(--border-faint)', display: 'flex', flexDirection: 'column', background: 'var(--canvas)', flexShrink: 0 }}>
+            <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-faint)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#3b82f6' }} />
-                <span style={{ fontSize: 12, fontWeight: 500, color: '#e2e8f0', fontFamily: 'Inter,sans-serif' }}>Ask agent</span>
+                <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif' }}>Ask agent</span>
               </div>
-              <button onClick={function () { setSidebarOpen(false); }} style={{ padding: '2px 8px', borderRadius: 5, border: '1px solid #1e2840', background: 'transparent', color: '#4a5568', fontSize: 10, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>close</button>
+              <button onClick={function () { setSidebarOpen(false); }} style={{ padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-faint)', fontSize: 10, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>close</button>
             </div>
             {gated ? (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
@@ -1959,9 +2192,9 @@ export default function NepseApp() {
             <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
               {chat.length === 0 && (
                 <div>
-                  <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 10, lineHeight: 1.6, fontFamily: 'Inter,sans-serif' }}>Ask anything about your portfolio or the market. I fetch live data when needed.</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 10, lineHeight: 1.6, fontFamily: 'Inter,sans-serif' }}>Ask anything about your portfolio or the market. I fetch live data when needed.</div>
                   {['NABIL current price?', 'Which positions at risk?', 'Should I act on GBIME?', 'What sectors look strong?'].map(function (q) {
-                    return <button key={q} onClick={function () { sendChat(q); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', marginBottom: 4, background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 6, color: '#4a5568', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', lineHeight: 1.4 }}>{q}</button>;
+                    return <button key={q} onClick={function () { sendChat(q); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', marginBottom: 4, background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 6, color: 'var(--text-faint)', fontSize: 10, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace', lineHeight: 1.4 }}>{q}</button>;
                   })}
                 </div>
               )}
@@ -1969,15 +2202,15 @@ export default function NepseApp() {
                 var isU = m.role === 'user';
                 return (
                   <div key={i} style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', alignItems: isU ? 'flex-end' : 'flex-start' }}>
-                    <div style={{ maxWidth: '92%', padding: '8px 10px', borderRadius: isU ? '8px 8px 2px 8px' : '2px 8px 8px 8px', background: isU ? '#152515' : '#0b0e16', border: '1px solid ' + (isU ? '#10b98122' : '#1e2840'), fontSize: 11, lineHeight: 1.6, color: isU ? '#6ee7b7' : '#8899b4', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'Inter,sans-serif' }}>
+                    <div style={{ maxWidth: '92%', padding: '8px 10px', borderRadius: isU ? '8px 8px 2px 8px' : '2px 8px 8px 8px', background: isU ? 'var(--positive-tint-bg)' : 'var(--surface)', border: '1px solid ' + (isU ? '#10b98122' : 'var(--border-default)'), fontSize: 11, lineHeight: 1.6, color: isU ? '#6ee7b7' : 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'Inter,sans-serif' }}>
                       {m.content}
                     </div>
-                    <div style={{ fontSize: 9, color: '#1e2840', marginTop: 2, fontFamily: 'IBM Plex Mono,monospace' }}>{timeAgo(m.ts)}</div>
+                    <div style={{ fontSize: 9, color: 'var(--border-default)', marginTop: 2, fontFamily: 'IBM Plex Mono,monospace' }}>{timeAgo(m.ts)}</div>
                   </div>
                 );
               })}
               {chatLoading && (
-                <div style={{ display: 'flex', gap: 4, padding: '8px 10px', background: '#0b0e16', border: '1px solid #1e2840', borderRadius: '2px 8px 8px 8px', width: 'fit-content', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 4, padding: '8px 10px', background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: '2px 8px 8px 8px', width: 'fit-content', alignItems: 'center' }}>
                   <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#3b82f6', animation: '_pulse 1.2s ease 0s infinite' }} />
                   <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#3b82f6', animation: '_pulse 1.2s ease .2s infinite' }} />
                   <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#3b82f6', animation: '_pulse 1.2s ease .4s infinite' }} />
@@ -1985,10 +2218,10 @@ export default function NepseApp() {
               )}
               <div ref={sidebarEnd} />
             </div>
-            <div style={{ padding: '10px 12px', borderTop: '1px solid #141824', flexShrink: 0 }}>
+            <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border-faint)', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: 6 }}>
                 <input value={chatInput} onChange={function (e) { setChatInput(e.target.value); }} onKeyDown={function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(''); } }} placeholder="ask anything..." style={{ flex: 1, fontSize: 11, padding: '7px 10px', borderRadius: 7, minHeight: 36 }} />
-                <button onClick={function () { sendChat(''); }} disabled={chatLoading || !chatInput.trim()} style={{ width: 34, height: 34, borderRadius: 7, border: 'none', background: chatInput.trim() ? '#3b82f6' : '#1e2840', color: chatInput.trim() ? '#fff' : '#2a3550', fontSize: 13, flexShrink: 0, cursor: 'pointer' }}>{'up'}</button>
+                <button onClick={function () { sendChat(''); }} disabled={chatLoading || !chatInput.trim()} style={{ width: 34, height: 34, borderRadius: 7, border: 'none', background: chatInput.trim() ? '#3b82f6' : 'var(--border-default)', color: chatInput.trim() ? '#fff' : 'var(--text-ghost)', fontSize: 13, flexShrink: 0, cursor: 'pointer' }}>{'up'}</button>
               </div>
             </div>
             </>)}
@@ -2023,15 +2256,31 @@ export default function NepseApp() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,10,15,.95)', zIndex: 200, overflowY: 'auto', padding: 16 }}>
           <div style={{ maxWidth: 680, margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <span style={{ fontSize: 18, fontWeight: 600, color: '#e2e8f0' }}>{ovSym}</span>
-              {ovSig && <span style={{ fontSize: 10, fontWeight: 700, color: SIG_COLORS[ovSig.signal] || '#4a5568', background: (SIG_COLORS[ovSig.signal] || '#4a5568') + '20', padding: '2px 8px', borderRadius: 3 }}><Term k={ovSig.signal}>{ovSig.signal}</Term></span>}
-              {ovLoading && <span style={{ fontSize: 10, color: '#4a5568' }}>loading...</span>}
-              <button onClick={function () { setOvSym(null); }} style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 5, border: '1px solid #1c2333', background: 'none', color: '#4a5568', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>close</button>
+              <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>{ovSym}</span>
+              {ovSig && <span style={{ fontSize: 10, fontWeight: 700, color: SIG_COLORS[ovSig.signal] || 'var(--text-faint)', background: (SIG_COLORS[ovSig.signal] || 'var(--text-faint)') + '20', padding: '2px 8px', borderRadius: 3 }}><Term k={ovSig.signal}>{ovSig.signal}</Term></span>}
+              {ovLoading && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>loading...</span>}
+              <button onClick={function () { setOvSym(null); }} style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 5, border: '1px solid var(--border-alt)', background: 'none', color: 'var(--text-faint)', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>close</button>
             </div>
+            <div style={{ ...card(), marginBottom: 10 }}>
+              <SectionHeader title="Price History" sub="daily close · verified" mb={8} />
+              <PriceChart bars={ovBars} />
+            </div>
+            {ovBars && ovBars.length > 1 && (
+              <div style={{ ...card(), marginBottom: 10 }}>
+                <SectionHeader title="Technical Indicators" sub="computed from verified closes, not agent output" mb={8} />
+                <IndicatorSummary bars={ovBars} />
+              </div>
+            )}
+            {ovBars && ovBars.length >= 10 && (
+              <div style={{ ...card('#a78bfa'), marginBottom: 10 }}>
+                <SectionHeader title="Backtest Harness" sub="reference strategy demo, not agent output" mb={8} color="#a78bfa" />
+                <BacktestDemo bars={ovBars} />
+              </div>
+            )}
             {ovData && ovData.price && (
               <div style={card('#10b981')}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 22, fontWeight: 600, color: '#e2e8f0' }}>{'Rs ' + ovData.price}</span>
+                  <span style={{ fontSize: 22, fontWeight: 600, color: 'var(--text-primary)' }}>{'Rs ' + ovData.price}</span>
                   <span style={{ fontSize: 12, color: ovData.change_pct >= 0 ? '#10b981' : '#ef4444' }}>{toPct(ovData.change_pct)}</span>
                   {(function () {
                     var src = (ovData && ovData.sources) || [];
@@ -2051,26 +2300,26 @@ export default function NepseApp() {
                     var rows = [['52w H', h52, 'Rs ', '', 'week52'], ['52w L', l52, 'Rs ', '', 'week52'], ['120d', v(od.avg120), 'Rs '], ['EPS', v(od.eps), '', '', 'EPS'], ['P/E', v(od.pe), '', '', 'PE'], ['BV', v(od.bv), 'Rs ', '', 'BV'], ['PBV', v(od.pbv), '', '', 'PBV'], ['Div', v(od.div_pct), '', '%', 'dividend'], ['Yield', v(od.yield), '', '%', 'yield'], ['Vol', v(od.volume)]];
                     return rows.map(function (item) {
                       var val = item[1] == null ? '-' : (item[2] || '') + item[1] + (item[3] || '');
-                      return <div key={item[0]} style={{ background: '#080a0f', borderRadius: 4, padding: '4px 7px' }}><div style={{ fontSize: 8, color: '#1c2333', marginBottom: 2 }}>{item[4] ? <Term k={item[4]}>{item[0]}</Term> : item[0]}</div><div style={{ fontSize: 11, fontWeight: 500, color: '#c8d4e8' }}>{val}</div></div>;
+                      return <div key={item[0]} style={{ background: 'var(--surface-sunken)', borderRadius: 4, padding: '4px 7px' }}><div style={{ fontSize: 8, color: 'var(--border-alt)', marginBottom: 2 }}>{item[4] ? <Term k={item[4]}>{item[0]}</Term> : item[0]}</div><div style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)' }}>{val}</div></div>;
                     });
                   })()}
                 </div>
                 {ovData.week52_low && ovData.week52_high && (function () {
                   var pos = Math.min(100, Math.max(0, ((ovData.price - ovData.week52_low) / (ovData.week52_high - ovData.week52_low)) * 100));
                   var bc = pos > 75 ? '#f59e0b' : pos < 25 ? '#3b82f6' : '#10b981';
-                  return <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>{'52-week range - ' + Math.round(pos) + '% of range'}</div><div style={{ height: 4, background: '#1c2333', borderRadius: 2, overflow: 'hidden' }}><div style={{ height: '100%', width: '' + pos + '%', background: bc, borderRadius: 2 }} /></div><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#1c2333', marginTop: 2 }}><span>{'Rs ' + ovData.week52_low}</span><span>{'Rs ' + ovData.week52_high}</span></div></div>;
+                  return <div><div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>{'52-week range - ' + Math.round(pos) + '% of range'}</div><div style={{ height: 4, background: 'var(--border-alt)', borderRadius: 2, overflow: 'hidden' }}><div style={{ height: '100%', width: '' + pos + '%', background: bc, borderRadius: 2 }} /></div><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--border-alt)', marginTop: 2 }}><span>{'Rs ' + ovData.week52_low}</span><span>{'Rs ' + ovData.week52_high}</span></div></div>;
                 })()}
-                {ovData.news && ovData.news.length > 0 && <div style={{ marginTop: 8 }}>{ovData.news.slice(0, 3).map(function (n, i) { return <div key={i} style={{ fontSize: 10, color: '#4a5568', padding: '3px 0', borderTop: i > 0 ? '1px solid #1c2333' : 'none', lineHeight: 1.5, fontFamily: 'IBM Plex Sans,sans-serif' }}>{n}</div>; })}</div>}
+                {ovData.news && ovData.news.length > 0 && <div style={{ marginTop: 8 }}>{ovData.news.slice(0, 3).map(function (n, i) { return <div key={i} style={{ fontSize: 10, color: 'var(--text-faint)', padding: '3px 0', borderTop: i > 0 ? '1px solid var(--border-alt)' : 'none', lineHeight: 1.5, fontFamily: 'IBM Plex Sans,sans-serif' }}>{n}</div>; })}</div>}
               </div>
             )}
             {!ovData && ovLoading && <div style={card()}>{ghost()}{ghost()}{ghost()}</div>}
-            {ovAnalysis ? <div style={{ background: '#0d1018', border: '1px solid #1c2333', borderRadius: 8, padding: '12px 14px', marginBottom: 10, lineHeight: 1.8, fontSize: 12, color: '#8899b4', whiteSpace: 'pre-wrap', fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovAnalysis}</div> : ovLoading && <div style={card()}>{ghost()}{ghost()}{ghost()}{ghost()}</div>}
+            {ovAnalysis ? <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-alt)', borderRadius: 8, padding: '12px 14px', marginBottom: 10, lineHeight: 1.8, fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovAnalysis}</div> : ovLoading && <div style={card()}>{ghost()}{ghost()}{ghost()}{ghost()}</div>}
             {ovSig && (
-              <div style={card(SIG_COLORS[ovSig.signal] || '#4a5568')}>
+              <div style={card(SIG_COLORS[ovSig.signal] || 'var(--text-faint)')}>
                 <div className="metrics-tight" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginBottom: 8 }}>
-                  {sbox('signal', ovSig.signal, SIG_COLORS[ovSig.signal], ovSig.signal)}{sbox('conf', ovSig.confidence, ovSig.confidence === 'HIGH' ? '#10b981' : ovSig.confidence === 'MEDIUM' ? '#f59e0b' : '#4a5568', 'confidence')}{sbox('entry', ovSig.entry || '-', null, 'entry')}{sbox('stop loss', ovSig.sl ? 'Rs ' + ovSig.sl : '-', '#ef4444', 'stop')}{sbox('target', ovSig.target ? 'Rs ' + ovSig.target : '-', '#10b981', 'target')}
+                  {sbox('signal', ovSig.signal, SIG_COLORS[ovSig.signal], ovSig.signal)}{sbox('conf', ovSig.confidence, ovSig.confidence === 'HIGH' ? '#10b981' : ovSig.confidence === 'MEDIUM' ? '#f59e0b' : 'var(--text-faint)', 'confidence')}{sbox('entry', ovSig.entry || '-', null, 'entry')}{sbox('stop loss', ovSig.sl ? 'Rs ' + ovSig.sl : '-', '#ef4444', 'stop')}{sbox('target', ovSig.target ? 'Rs ' + ovSig.target : '-', '#10b981', 'target')}
                 </div>
-                {ovSig.why && <div style={{ fontSize: 11, color: '#8899b4', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: '#080a0f', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovSig.why}</div>}
+                {ovSig.why && <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: 8, padding: '7px 10px', background: 'var(--surface-sunken)', borderRadius: 4, fontFamily: 'IBM Plex Sans,sans-serif' }}>{ovSig.why}</div>}
                 {ovSig.signal === 'BUY' && <button onClick={function () { if (gated) { showToast('Sign in with Google to save positions', 'err'); setOvSym(null); setTab('settings'); return; } setOvSym(null); setBuyTarget(ovSig.id); setBuyQty(''); setBuySL(ovSig.sl ? String(ovSig.sl) : ''); setBuyReason(ovSig.why || ''); setTab('signals'); }} style={btn('#10b981')}>{'log buy for ' + ovSym}</button>}
               </div>
             )}
@@ -2123,7 +2372,7 @@ function PaperPanel(props) {
   }
 
   if (loading && !summary) {
-    return <div><PaperRibbon /><Disclaimer exchange={props.exchange} /><div style={{ textAlign: 'center', padding: '40px 20px', color: '#4a5568', fontSize: 11 }}>Loading simulated account…</div></div>;
+    return <div><PaperRibbon /><Disclaimer exchange={props.exchange} /><div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-faint)', fontSize: 11 }}>Loading simulated account…</div></div>;
   }
 
   if (summary && summary.enabled === false) {
@@ -2131,7 +2380,7 @@ function PaperPanel(props) {
       <div>
         <PaperRibbon />
         <Disclaimer exchange={props.exchange} />
-        <div style={{ textAlign: 'center', padding: '40px 20px', color: '#4a5568', fontSize: 11 }}>Paper trading isn&apos;t enabled on this deployment yet.</div>
+        <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-faint)', fontSize: 11 }}>Paper trading isn&apos;t enabled on this deployment yet.</div>
       </div>
     );
   }
@@ -2170,7 +2419,7 @@ function PaperPanel(props) {
   function submit() {
     if (busy) return;
     setBusy(true);
-    store.submitPaperOrder({ symbol: symbol, side: side, qty: qtyN })
+    store.submitPaperOrder({ symbol: symbol, side: side, qty: qtyN, exchange: props.exchange })
       .then(function (d) {
         refresh(d);
         showToast('SIMULATED ' + side + ' filled: ' + qtyN + ' ' + symbol, 'ok');
@@ -2199,12 +2448,12 @@ function PaperPanel(props) {
       {/* ACCOUNT SUMMARY */}
       <div className="grid-2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
         {[
-          ['cash', toRs(Number(account.cash) || 0), '#e2e8f0'],
+          ['cash', toRs(Number(account.cash) || 0), 'var(--text-primary)'],
           ['equity', toRs(Number(equity.totalEquity) || 0), AMBER],
           ['return', fmtRet(Number(equity.returnPct) || 0), (Number(equity.returnPct) || 0) >= 0 ? '#10b981' : '#ef4444'],
-          ['open', String(openPositions.length), '#e2e8f0'],
+          ['open', String(openPositions.length), 'var(--text-primary)'],
         ].map(function (item) {
-          return <div key={item[0]} style={{ background: '#0d1018', border: '1px solid ' + AMBER + '22', borderRadius: 6, padding: '8px 10px' }}><div style={{ fontSize: 9, color: '#4a5568', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3 }}>{item[0]}</div><div style={{ fontSize: 16, fontWeight: 600, color: item[2] }}>{item[1]}</div></div>;
+          return <div key={item[0]} style={{ background: 'var(--surface-raised)', border: '1px solid ' + AMBER + '22', borderRadius: 6, padding: '8px 10px' }}><div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3 }}>{item[0]}</div><div style={{ fontSize: 16, fontWeight: 600, color: item[2] }}>{item[1]}</div></div>;
         })}
       </div>
 
@@ -2216,36 +2465,36 @@ function PaperPanel(props) {
           {['BUY', 'SELL'].map(function (sd) {
             var on = side === sd;
             var c = sd === 'BUY' ? '#10b981' : '#ef4444';
-            return <button key={sd} onClick={function () { setSide(sd); setConfirming(false); }} style={{ flex: 1, padding: '7px', borderRadius: 6, border: '1px solid ' + (on ? c : '#1e2840'), background: on ? c + '18' : 'transparent', color: on ? c : '#4a5568', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{sd}</button>;
+            return <button key={sd} onClick={function () { setSide(sd); setConfirming(false); }} style={{ flex: 1, padding: '7px', borderRadius: 6, border: '1px solid ' + (on ? c : 'var(--border-default)'), background: on ? c + '18' : 'transparent', color: on ? c : 'var(--text-faint)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>{sd}</button>;
           })}
         </div>
         <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
           <div>
-            <div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>symbol</div>
-            <select value={symbol} onChange={function (e) { setSymbol(e.target.value); setConfirming(false); }} style={{ width: '100%', padding: '7px 8px', borderRadius: 6, background: '#07090e', border: '1px solid #1e2840', color: '#c8d4e8', fontSize: 12, fontFamily: 'IBM Plex Mono,monospace' }}>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>symbol</div>
+            <select value={symbol} onChange={function (e) { setSymbol(e.target.value); setConfirming(false); }} style={{ width: '100%', padding: '7px 8px', borderRadius: 6, background: 'var(--canvas)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 12, fontFamily: 'IBM Plex Mono,monospace' }}>
               <option value="">select…</option>
               {symbolOptions.map(function (s) { return <option key={s} value={s}>{s}</option>; })}
             </select>
           </div>
           <div>
-            <div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>quantity (whole shares)</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>quantity (whole shares)</div>
             <input value={qty} onChange={function (e) { setQty(e.target.value.replace(/[^0-9]/g, '')); setConfirming(false); }} inputMode="numeric" type="number" placeholder="shares" />
           </div>
         </div>
 
         {/* indicative price + preview */}
         {symbol && (
-          <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 8 }}>
             {Number.isFinite(indPrice) && indPrice > 0
-              ? <>indicative price ≈ <span style={{ color: '#c8d4e8' }}>{'Rs ' + indPrice}</span> <span style={{ color: '#2a3550' }}>(final fill at the verified live price)</span></>
+              ? <>indicative price ≈ <span style={{ color: 'var(--text-secondary)' }}>{'Rs ' + indPrice}</span> <span style={{ color: 'var(--text-ghost)' }}>(final fill at the verified live price)</span></>
               : <span style={{ color: '#f59e0b' }}>no recent price — the order fills at the verified live price on submit</span>}
           </div>
         )}
         {preview && preview.ok && (
-          <div style={{ fontSize: 10, color: '#4a5568', marginBottom: 8, padding: '7px 9px', background: '#0d1018', borderRadius: 5 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 8, padding: '7px 9px', background: 'var(--surface-raised)', borderRadius: 5 }}>
             {side === 'BUY'
-              ? <>you will pay ≈ <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{toRs2(Math.abs(preview.cashDelta))}</span> <span style={{ color: '#2a3550' }}>{'(incl. charges ' + toRs2(preview.charges) + ')'}</span></>
-              : <>you will receive ≈ <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{toRs2(preview.cashDelta)}</span> <span style={{ color: '#2a3550' }}>{'(net of charges ' + toRs2(preview.charges) + ' + CGT ' + toRs2(preview.cgt) + ')'}</span></>}
+              ? <>you will pay ≈ <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{toRs2(Math.abs(preview.cashDelta))}</span> <span style={{ color: 'var(--text-ghost)' }}>{'(incl. charges ' + toRs2(preview.charges) + ')'}</span></>
+              : <>you will receive ≈ <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{toRs2(preview.cashDelta)}</span> <span style={{ color: 'var(--text-ghost)' }}>{'(net of charges ' + toRs2(preview.charges) + ' + CGT ' + toRs2(preview.cgt) + ')'}</span></>}
           </div>
         )}
         {preview && !preview.ok && (
@@ -2254,8 +2503,8 @@ function PaperPanel(props) {
 
         {/* confirmation step */}
         {confirming ? (
-          <div style={{ background: '#080a0f', borderRadius: 6, padding: 10, border: '1px solid ' + AMBER + '44' }}>
-            <div style={{ fontSize: 11, color: '#c8d4e8', marginBottom: 8, lineHeight: 1.5 }}>
+          <div style={{ background: 'var(--surface-sunken)', borderRadius: 6, padding: 10, border: '1px solid ' + AMBER + '44' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8, lineHeight: 1.5 }}>
               Confirm <span style={{ fontWeight: 700, color: AMBER }}>SIMULATED</span> {side} of <span style={{ fontWeight: 600 }}>{qtyN + ' ' + symbol}</span> at the verified live price. This is practice with virtual money — no real order is placed.
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -2264,24 +2513,24 @@ function PaperPanel(props) {
             </div>
           </div>
         ) : (
-          <button onClick={function () { setConfirming(true); }} disabled={!canReview} style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1px solid ' + (canReview ? AMBER : '#1e2840'), background: canReview ? AMBER + '15' : 'transparent', color: canReview ? AMBER : '#2a3550', fontSize: 11, fontWeight: 600, cursor: canReview ? 'pointer' : 'default', fontFamily: 'IBM Plex Mono,monospace' }}>review order</button>
+          <button onClick={function () { setConfirming(true); }} disabled={!canReview} style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1px solid ' + (canReview ? AMBER : 'var(--border-default)'), background: canReview ? AMBER + '15' : 'transparent', color: canReview ? AMBER : 'var(--text-ghost)', fontSize: 11, fontWeight: 600, cursor: canReview ? 'pointer' : 'default', fontFamily: 'IBM Plex Mono,monospace' }}>review order</button>
         )}
       </div>
 
       {/* OPEN POSITIONS */}
       {openPositions.length > 0 && (
         <div style={{ marginTop: 4 }}>
-          <div style={{ fontSize: 9, color: '#4a5568', letterSpacing: '.08em', marginBottom: 8 }}>SIMULATED POSITIONS</div>
+          <div style={{ fontSize: 9, color: 'var(--text-faint)', letterSpacing: '.08em', marginBottom: 8 }}>SIMULATED POSITIONS</div>
           {openPositions.map(function (p) {
             var unreal = Number(p.netPnl) || 0;
             return (
               <div key={p.id} style={card(AMBER, { marginBottom: 8 })}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{p.symbol}</span>
-                  <span style={{ fontSize: 10, color: '#4a5568' }}>{p.qty + 'u @ Rs' + (Math.round((Number(p.buyPrice) || 0) * 100) / 100)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{p.symbol}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{p.qty + 'u @ Rs' + (Math.round((Number(p.buyPrice) || 0) * 100) / 100)}</span>
                   {p.priceUnavailable
                     ? <span style={{ fontSize: 9, color: '#f59e0b' }}>no live price</span>
-                    : <span style={{ fontSize: 10, color: '#c8d4e8' }}>{'live Rs' + p.currentPrice}</span>}
+                    : <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>{'live Rs' + p.currentPrice}</span>}
                   {!p.priceUnavailable && <span style={{ fontSize: 10, fontWeight: 600, color: unreal >= 0 ? '#10b981' : '#ef4444' }}>{signed(unreal)} net</span>}
                   <button onClick={function () { setSide('SELL'); setSymbol(p.symbol); setQty(String(p.qty)); setConfirming(false); }} style={Object.assign({ marginLeft: 'auto' }, btn('#ef4444', true))}>sell</button>
                 </div>
@@ -2295,7 +2544,7 @@ function PaperPanel(props) {
       <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
         {resetConfirm ? (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: '#4a5568' }}>wipe all simulated positions &amp; restore virtual cash?</span>
+            <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>wipe all simulated positions &amp; restore virtual cash?</span>
             <button onClick={doReset} disabled={busy} style={btn('#ef4444', true)}>{busy ? '…' : 'yes, reset'}</button>
             <button onClick={function () { setResetConfirm(false); }} style={btn(null, true)}>cancel</button>
           </div>
@@ -2319,10 +2568,10 @@ function PaperRibbon() {
 
 function SignInPrompt(props) {
   return (
-    <div style={{ background: '#0b0e16', border: '1px solid #1e2840', borderRadius: 12, padding: '28px 20px', textAlign: 'center', marginTop: 8 }}>
-      <div style={{ fontSize: 13, color: '#e2e8f0', fontFamily: 'Inter,sans-serif', fontWeight: 600, marginBottom: 5 }}>{props.title}</div>
-      <div style={{ fontSize: 11, color: '#4a5568', marginBottom: 16, lineHeight: 1.6, maxWidth: 320, marginLeft: 'auto', marginRight: 'auto' }}>{props.sub}</div>
-      <button onClick={props.onSignIn} style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', background: '#3b82f615', border: '1px solid #3b82f6', borderRadius: 8, padding: '9px 18px', cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Sign in with Google to save</button>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '28px 20px', textAlign: 'center', marginTop: 8 }}>
+      <div style={{ fontSize: 13, color: 'var(--text-primary)', fontFamily: 'Inter,sans-serif', fontWeight: 600, marginBottom: 5 }}>{props.title}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 16, lineHeight: 1.6, maxWidth: 320, marginLeft: 'auto', marginRight: 'auto' }}>{props.sub}</div>
+      <button onClick={props.onSignIn} style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', background: '#3b82f615', border: '1px solid #3b82f6', borderRadius: 8, padding: '9px 18px', cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Sign in with Google to save</button>
     </div>
   );
 }
@@ -2330,13 +2579,38 @@ function SignInPrompt(props) {
 // Shared buy form (used in Today + Signals tabs).
 function BuyForm(props) {
   var s = props.s;
+  // Position-size helper (Phase C risk tools) — nested here because a size
+  // suggestion is only meaningful once a stop-loss exists, which this same form
+  // collects. Capital/risk% are a device-local preference (not sent anywhere),
+  // matching how the app already persists device-only view prefs (e.g. ni:exchange).
+  var risk = store.deviceGet('ni:risk', { capital: '', riskPct: '1' });
+  var [capital, setCapital] = useState(risk.capital || '');
+  var [riskPct, setRiskPct] = useState(risk.riskPct || '1');
+  function saveRisk(next) { store.deviceSet('ni:risk', next); }
+  var sizeHint = suggestedQuantity({ capital: capital, riskPct: riskPct, entry: s.price, stopLoss: props.buySL || s.sl });
+
   return (
-    <div style={{ background: '#080a0f', borderRadius: 6, padding: 10, border: '1px solid #1c2333' }}>
+    <div style={{ background: 'var(--surface-sunken)', borderRadius: 6, padding: 10, border: '1px solid var(--border-alt)' }}>
       <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-        <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>quantity</div><input value={props.buyQty} onChange={function (e) { props.setBuyQty(e.target.value); }} type="number" placeholder="units" /></div>
-        <div><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>stop loss</div><input value={props.buySL} onChange={function (e) { props.setBuySL(e.target.value); }} type="number" placeholder={s.sl ? 'Rs ' + s.sl : ''} /></div>
+        <div><div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>quantity</div><input value={props.buyQty} onChange={function (e) { props.setBuyQty(e.target.value); }} type="number" placeholder="units" /></div>
+        <div><div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>stop loss</div><input value={props.buySL} onChange={function (e) { props.setBuySL(e.target.value); }} type="number" placeholder={s.sl ? 'Rs ' + s.sl : ''} /></div>
       </div>
-      <div style={{ marginBottom: 8 }}><div style={{ fontSize: 9, color: '#4a5568', marginBottom: 3 }}>why? <span style={{ color: '#ef4444' }}>required</span></div><input value={props.buyReason} onChange={function (e) { props.setBuyReason(e.target.value); }} placeholder="your reason" /></div>
+      <div style={{ background: 'var(--canvas)', borderRadius: 5, padding: 8, marginBottom: 8, border: '1px solid var(--border-alt)' }}>
+        <div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 6 }}>size by risk (optional — never auto-applied)</div>
+        <div className="grid-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 6 }}>
+          <div><div style={{ fontSize: 9, color: 'var(--text-ghost)', marginBottom: 2 }}>capital (Rs)</div><input value={capital} onChange={function (e) { var v = e.target.value; setCapital(v); saveRisk({ capital: v, riskPct: riskPct }); }} type="number" placeholder="e.g. 100000" /></div>
+          <div><div style={{ fontSize: 9, color: 'var(--text-ghost)', marginBottom: 2 }}>risk % of capital</div><input value={riskPct} onChange={function (e) { var v = e.target.value; setRiskPct(v); saveRisk({ capital: capital, riskPct: v }); }} type="number" placeholder="e.g. 1" /></div>
+        </div>
+        {sizeHint ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{'risking Rs ' + Math.round(sizeHint.riskAmount).toLocaleString('en-IN') + ' -> suggests ' + sizeHint.qty + ' units (' + sizeHint.pctOfCapital.toFixed(0) + '% of capital)'}</span>
+            <button onClick={function () { props.setBuyQty(String(sizeHint.qty)); }} style={btn('#3b82f6', true)}>use {sizeHint.qty}</button>
+          </div>
+        ) : (capital || riskPct !== '1') && (
+          <div style={{ fontSize: 10, color: 'var(--text-ghost)' }}>enter capital + a stop-loss above to see a suggested size</div>
+        )}
+      </div>
+      <div style={{ marginBottom: 8 }}><div style={{ fontSize: 9, color: 'var(--text-faint)', marginBottom: 3 }}>why? <span style={{ color: '#ef4444' }}>required</span></div><input value={props.buyReason} onChange={function (e) { props.setBuyReason(e.target.value); }} placeholder="your reason" /></div>
       {props.buyQty && s.price && <BuyChargePreview qty={props.buyQty} price={s.price} />}
       <div style={{ display: 'flex', gap: 6 }}>
         <button onClick={props.onConfirm} style={{ flex: 1, padding: '7px', borderRadius: 6, border: '1px solid #10b981', background: 'transparent', color: '#10b981', fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono,monospace' }}>confirm buy</button>

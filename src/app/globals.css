@@ -1,6 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
+/* ==========================================================================
+   THEME (personal preference — dark [default] / light)
+   --------------------------------------------------------------------------
+   Only the NEUTRAL palette (surfaces/borders/text) changes between themes —
+   semantic accent colors (BUY/SELL green/red, HOLD amber, info blue, the
+   discovery violet) stay CONSTANT across both, a deliberate choice (common in
+   real design systems, e.g. GitHub keeps its success/danger hues stable across
+   light/dark) that also sidesteps ~90 call sites in NepseApp.jsx that build a
+   translucent background by string-concatenating an alpha suffix onto an
+   accent hex (`sc + '22'`) — those keep working completely unchanged.
+
+   :root = dark, the app's original/default look, so nobody's view changes
+   unless they explicitly pick "light" (persisted via useTheme.js, which sets
+   documentElement[data-theme]). [data-theme="light"] overrides only the
+   neutral tokens below.
+   ========================================================================== */
 :root {
+  /* legacy aliases (pre-existing, kept for anything still reading them) */
   --bg: #07090e;
   --panel: #0b0e16;
   --border: #1e2840;
@@ -10,6 +27,37 @@
   --green: #10b981;
   --red: #ef4444;
   --amber: #f59e0b;
+
+  /* neutral surfaces (dark, darkest -> lightest) */
+  --canvas: #07090e;
+  --surface: #0b0e16;
+  --surface-raised: #0d1018;
+  --surface-sunken: #080a0f;
+  --surface-deep: #060810;
+  --overlay-backdrop: #04060bdd;
+
+  /* neutral borders */
+  --border-default: #1e2840;
+  --border-subtle: #0f1420;
+  --border-faint: #141824;
+  --border-alt: #1c2333;
+  --border-hairline: #0a0c14;
+
+  /* neutral text (brightest -> dimmest) */
+  --text-primary: #e2e8f0;
+  --text-secondary: #c8d4e8;
+  --text-muted: #8899b4;
+  --text-faint: #4a5568;
+  --text-ghost: #2a3550;
+
+  /* Solid, semantically-tinted banner/bubble backgrounds. Unlike the
+     accent colors themselves (unchanged across themes), these are dark-tinted
+     SURFACES built from those accents for the current dark theme, and would
+     read as a jarring near-black smear on a light background otherwise. */
+  --negative-banner-bg: #3a1a1a; /* stalled-scan banner */
+  --warning-banner-bg: #3a2c10;  /* partial-scan banner */
+  --positive-tint-bg: #152515;   /* chat: my-message bubble */
+
   /* Fluid type scale (responsive layer). Mobile floors keep structural text
      legible on a phone; desktop ceilings match the inline sizes already in use.
      Existing inline font-sizes are intentionally left untouched. */
@@ -21,6 +69,40 @@
   --tap: 44px; /* minimum comfortable touch target */
 }
 
+/* Light theme — a clean, professional light palette. Semantic accents
+   (green/red/amber/blue/violet) are intentionally NOT redefined here — see the
+   comment above. */
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --border: #d8dce3;
+  --text: #262b36;
+  --muted: #6b7280;
+
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --surface-raised: #eef0f4;
+  --surface-sunken: #eceef2;
+  --surface-deep: #e7e9ee;
+  --overlay-backdrop: #e7e9eecc;
+
+  --border-default: #d8dce3;
+  --border-subtle: #e4e7ec;
+  --border-faint: #e8eaef;
+  --border-alt: #dde1e8;
+  --border-hairline: #e2e5eb;
+
+  --text-primary: #12141a;
+  --text-secondary: #2c313d;
+  --text-muted: #5b6272;
+  --text-faint: #7c8494;
+  --text-ghost: #a3aab8;
+
+  --negative-banner-bg: #fdecec;
+  --warning-banner-bg: #fdf3e2;
+  --positive-tint-bg: #e8f8f0;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -29,7 +111,7 @@
 
 html,
 body {
-  background: #07090e;
+  background: var(--canvas);
   color: var(--text);
   font-family: 'IBM Plex Mono', monospace;
   -webkit-font-smoothing: antialiased;
@@ -47,12 +129,12 @@ a {
 input,
 textarea,
 select {
-  background: #0b0e16;
-  border: 1px solid #1e2840;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   padding: 9px 13px;
   font-size: 12px;
-  color: #c8d4e8;
+  color: var(--text-secondary);
   font-family: inherit;
   outline: none;
   width: 100%;
@@ -77,7 +159,7 @@ button {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e2840;
+  background: var(--border-default);
   border-radius: 3px;
 }
 

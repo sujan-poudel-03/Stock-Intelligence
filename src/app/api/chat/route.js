@@ -10,6 +10,7 @@ import { getUserEntitlements } from '@/lib/entitlements';
 import { getUserSupabase } from '@/lib/supabase';
 import { SEBON_LEVY_PCT, DP_FEE } from '@/lib/charges';
 import { buildPortfolioSummary } from '@/lib/portfolioSummary';
+import { normalizeExchange } from '@/lib/exchanges';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -79,15 +80,17 @@ export const POST = withGuard(async (request) => {
   const signals = Array.isArray(ctx.signals) ? ctx.signals : [];
   const watchlist = Array.isArray(ctx.watchlist) ? ctx.watchlist : [];
   const market = ctx.market || null;
+  const exchange = normalizeExchange(ctx.exchange);
 
   // Portfolio truth: when signed in, compute P&L + concentration SERVER-SIDE from the
   // user's own positions + the shared ground-truth prices (buildPortfolioSummary) rather
   // than trusting the client-sent ctx.portfolio (which carried throwaway client math and
   // no verified prices). Best-effort — a failure falls back to the client-ctx path below,
-  // and the LLM never sets a price (it only reads the finished summary).
+  // and the LLM never sets a price (it only reads the finished summary). Scoped to the
+  // exchange the user is currently viewing — never blends NEPSE + NYSE positions.
   let serverSummary = null;
   if (user) {
-    serverSummary = await buildPortfolioSummary(user).catch(() => null);
+    serverSummary = await buildPortfolioSummary(user, exchange).catch(() => null);
     if (serverSummary && !serverSummary.ok) serverSummary = null;
   }
 

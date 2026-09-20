@@ -19,6 +19,7 @@ import { fetchYahooStock, normalizeYahooQuote } from './yahoo.js';
 import { getExchange, normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
 import { parseMerolaganiFundamentals } from './merolaganiFundamentals.js';
 import { parseSharesansarToday } from './sharesansarToday.js';
+import { parseMerolaganiIndexLatest } from './merolaganiIndex.js';
 
 export const ACTIVE_SOURCES_KEY = 'ni:market_sources';
 // Code default is the offline `sample` source so the app runs with no network/config.
@@ -268,6 +269,39 @@ async function fetchMerolagani(symbol) {
     return { symbol: s, price, prevClose, changePct, asOf: Date.now(), source: 'merolagani', fundamentals };
   } catch {
     return null;
+  }
+}
+
+// getVerifiedIndex(): the NEPSE Index's own verified (non-LLM) reading, scraped from
+// merolagani.com/Indices.aspx — closes the "track record has no verified index
+// benchmark" gap (see src/lib/merolaganiIndex.js for the full rationale). Shaped
+// like getVerifiedPrice()'s return so it can feed the SAME recordPricePoint() path
+// (src/lib/priceHistory.js) under a reserved symbol ('NEPSE_INDEX'). Best-effort:
+// any failure (network, layout change) returns { verified: false } so a caller
+// simply skips recording that day rather than crashing or guessing a value.
+const INDICES_URL = 'https://merolagani.com/Indices.aspx';
+export async function getVerifiedIndex() {
+  try {
+    const res = await fetch(INDICES_URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      cache: 'no-store',
+    });
+    if (!res.ok) return { verified: false, reason: `http ${res.status}` };
+    const row = parseMerolaganiIndexLatest(await res.text());
+    if (!row) return { verified: false, reason: 'unparseable' };
+    return {
+      verified: true,
+      price: row.value,
+      asOf: Date.now(), // the row's own date is AD calendar-only (no time); asOf drives staleness, not identity
+      indexDate: row.date,
+      changePct: row.changePct,
+      range: null,
+      liquidity: null,
+      stale: false,
+      sources: ['merolagani'],
+    };
+  } catch (err) {
+    return { verified: false, reason: err?.message || 'fetch failed' };
   }
 }
 

@@ -28,6 +28,7 @@ Legend: 🔴 required to run · 🟠 activates a shipped feature · ⚪ optional
 | `ALERT_TO` | ⚪ | Operator digest recipient (defaults to the built-in operator address) |
 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | ⚪ | Operator Telegram digest (per-user Telegram is a future item) |
 | `NEPALSTOCK_API_TOKEN` | ⚪ | Enables the official NEPSE source (a 3rd cross-check) once you have a token |
+| `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | 🟠 | Turns ON real browser push delivery (per-user watchlist-flip + outcome alerts). Generate with `node scripts/generate-vapid-keys.mjs` — see §4c. |
 | `ENABLE_NYSE` | ⚪ | `true` to enable the NYSE market (Yahoo source). Off by default. |
 | `NEXT_PUBLIC_REQUIRE_LOGIN` | ⚪ | `true` = hard login wall before the app renders (hides the public track record). Keep off for a public marketing surface. |
 
@@ -54,6 +55,101 @@ surfaces (Market Data Sources, Notifications).
   testing, so this strengthens verification without over-rejecting.
 - **Email alerts:** set `RESEND_API_KEY`. Users then opt in per-channel + per-direction in
   Settings → Alerts. The UI now warns if a channel is enabled but its key isn't set.
+- **Per-user Telegram alerts** (closes the "no push/mobile alerts" gap): each user
+  links their own chat — separate from the single operator `TELEGRAM_CHAT_ID` used
+  for the admin digest. One-time setup:
+  1. Create a bot via [@BotFather](https://t.me/BotFather) (`/newbot`) → note the
+     **bot token** and the **bot username** (without the `@`).
+  2. Set `TELEGRAM_BOT_TOKEN` (shared with the existing operator-digest channel) and
+     `TELEGRAM_BOT_USERNAME` (so the app can build a one-tap `t.me/<bot>?start=<code>`
+     link instead of asking users to type `/start <code>` by hand).
+  3. Generate a random secret and set `TELEGRAM_WEBHOOK_SECRET`, then register the
+     webhook once:
+     `curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-deployment>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"`.
+     This secret is required — without it, anyone who finds the public webhook URL
+     could forge a fake Telegram update and redeem another user's link code.
+  4. Users then toggle Telegram on in Settings → My Alerts and follow the "link
+     telegram" flow that appears — no further owner action per user.
+
+## 4a. Closer-to-intraday scan cadence (optional, closes a real trader gap)
+
+Vercel Hobby's cron scheduler only supports once-daily invocations (why
+`vercel.json` schedules `45 4 * * *` and not, say, every 15 minutes) — that's a
+platform limit, not a code one. NEPSE trades 11:00–15:00 NPT, so a once-a-day scan
+misses intraday moves entirely, which is a real gap for anyone using this for
+swing trading. Two ways to close it, in order of effort:
+
+1. **Free external scheduler** (no Vercel plan change): sign up for a free cron
+   service (e.g. cron-job.org) and point it at
+   `POST https://<your-deployment>/api/cron/scan` with header
+   `Authorization: Bearer <CRON_SECRET>`, on a schedule inside trading hours (e.g.
+   every 15–30 min, 11:00–15:00 NPT / 05:15–09:15 UTC). The endpoint already accepts
+   this exact call shape — it's what Vercel's own cron does — so no code change is
+   needed, only the external scheduler's own signup + configuration, which only the
+   deployment owner can do (it needs the live URL and secret).
+2. **Upgrade off Hobby**: Vercel Pro allows more frequent native cron, removing the
+   need for an external scheduler.
+
+Either way, watch the daily LLM budget (`LLM_DAILY_BUDGET`) — more scan cycles per
+day means more LLM calls; a 15-minute cadence across a 4-hour trading window is up
+to 16x today's call volume if left unchanged, so raising the cadence should come
+with either a lower per-cycle symbol count or a higher budget ceiling.
+
+## 4b. NEPSE index benchmark (Track Record tab)
+
+Every scan cycle now records one verified (non-LLM) NEPSE index bar into
+`price_history` — a second, independent data source (`merolagani.com/Indices.aspx`,
+distinct from the merolagani stock-quote endpoint), so the Track Record tab can show
+the index's own buy-and-hold return alongside the agent's real track record. No owner
+action needed beyond applying `supabase/migrations/20260917000000_price_history.sql`
+(§6 below) — the benchmark box appears automatically once 2+ daily bars have
+accrued, and stays silently hidden until then (no historical backfill: the source
+paginates via an ASP.NET postback, too fragile to simulate reliably).
+
+## 4c. Push notifications (web) — fully wired
+
+Browser push is a real, third per-user delivery channel now (alongside email and
+Telegram): subscription capture (`/api/push/subscribe`, `/api/push/status`) AND
+actual RFC 8291-encrypted sending (`src/lib/notify.js` `deliverPush`, via the
+`web-push` npm package) are both live, wired the same way as the other two
+channels into `src/lib/alertDelivery.js`'s per-user watchlist-flip + outcome
+alerts.
+
+**To turn it on:**
+1. Generate a VAPID keypair **once per deployment**: `node scripts/generate-vapid-keys.mjs`.
+   Keep it stable — rotating it invalidates every existing subscription (users
+   would need to reconnect).
+2. Set `VAPID_PUBLIC_KEY` (safe to expose) and `VAPID_PRIVATE_KEY` (**server-only,
+   never `NEXT_PUBLIC_`**) in Vercel.
+3. Users toggle "Browser Push" on in Settings → My Alerts and click "connect
+   device" (nested under the toggle, same pattern as Telegram linking) — one
+   subscription per browser/device, several per user is fine (phone + laptop).
+4. Apply `supabase/migrations/20260919000000_push_subscriptions.sql` if not
+   already applied (§6) — until then the toggle is inert (schema-flag-gated).
+
+An expired/revoked subscription (the push service returns 404/410) is pruned
+automatically on the next send attempt — no manual cleanup needed. Push has no
+"operator digest" equivalent to email/Telegram's `ALERT_TO`/`TELEGRAM_CHAT_ID`
+(there's no single operator subscription) — it's purely the per-user channel.
+
+**Verified this session:** `npm install web-push` (previously blocked — see the
+note below), `/api/push/vapid-public-key` and `/api/channels` both correctly
+reflect `configured:true` once the env is set, and the full test/lint/build suite
+passes with the new channel wired in. Full device-connect-and-receive was **not**
+exercised end-to-end here: this deployment runs behind `NEXT_PUBLIC_REQUIRE_LOGIN`,
+so reaching the toggle needs a real Google sign-in, and `push_subscriptions` isn't
+migrated on this dev DB yet — both are exactly the owner-side steps in 3–4 above.
+
+> **Root cause of the earlier "npm registry unreachable" block (now resolved):**
+> this machine resolves IPv6 for `registry.npmjs.org` but has no working IPv6
+> route, so Node's own fetch hangs (~10s timeout) while `curl` succeeds instantly
+> over IPv4. `~/.npmrc` already carries a fix for child processes npm spawns
+> (`node-options=--dns-result-order=ipv4first --no-network-family-autoselection`),
+> but npm's *own* process doesn't pick that up from `.npmrc` — it needs
+> `NODE_OPTIONS` set directly in the environment, e.g.
+> `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autoselection" npm install <pkg>`.
+> Consider exporting `NODE_OPTIONS` in your shell profile so every `npm` command
+> picks it up automatically, not just ones prefixed by hand.
 
 ## 5. Seed the scan universe
 

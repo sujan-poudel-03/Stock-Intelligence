@@ -212,3 +212,88 @@ export async function paperTradingReady() {
 export function __resetPaperTradingProbe() {
   paperTradingProbe = null;
 }
+
+// --- Price history (redesign Phase A — charts) ------------------------------
+// Same discipline as systemWatchlistReady: until 20260917000000_price_history.sql
+// is applied, touching the `price_history` table would ERROR. Every read/write
+// (scan-chain recording, chart API) is gated on this probe so an unmigrated DB is
+// byte-for-byte as today (no price history recorded; chart UI shows an honest
+// "not enough history yet" state instead of erroring).
+
+let priceHistoryProbe = null;
+
+// priceHistoryReady(): true when the global `price_history` table exists.
+export async function priceHistoryReady() {
+  if (priceHistoryProbe) return priceHistoryProbe;
+  priceHistoryProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('price_history').select('symbol').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return priceHistoryProbe;
+}
+
+// Test-only: reset the memoized price-history probe.
+export function __resetPriceHistoryProbe() {
+  priceHistoryProbe = null;
+}
+
+// --- Per-user Telegram linking (redesign Phase G — reach) -------------------
+// Same discipline as paperTradingReady: until 20260918000000_telegram_link.sql is
+// applied, touching alert_prefs.telegram_chat_id/telegram_link_code would ERROR.
+// Every read/write (link-code issuance, the webhook, delivery) is gated on this
+// probe so an unmigrated DB is byte-for-byte as today (Telegram toggle exists but
+// never actually links or delivers per-user).
+
+let telegramLinkProbe = null;
+
+// telegramLinkReady(): true when alert_prefs carries the telegram_chat_id column.
+export async function telegramLinkReady() {
+  if (telegramLinkProbe) return telegramLinkProbe;
+  telegramLinkProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('alert_prefs').select('telegram_chat_id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return telegramLinkProbe;
+}
+
+// Test-only: reset the memoized telegram-link probe.
+export function __resetTelegramLinkProbe() {
+  telegramLinkProbe = null;
+}
+
+// --- Browser push subscriptions (redesign Phase G — reach) -------------------
+// Same discipline as paperTradingReady: until 20260919000000_push_subscriptions.sql
+// is applied, touching the `push_subscriptions` table would ERROR. Gated so an
+// unmigrated DB reports the push toggle as enabled:false rather than erroring.
+
+let pushSubscriptionsProbe = null;
+
+// pushSubscriptionsReady(): true when the `push_subscriptions` table exists.
+export async function pushSubscriptionsReady() {
+  if (pushSubscriptionsProbe) return pushSubscriptionsProbe;
+  pushSubscriptionsProbe = (async () => {
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('push_subscriptions').select('id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  return pushSubscriptionsProbe;
+}
+
+// Test-only: reset the memoized push-subscriptions probe.
+export function __resetPushSubscriptionsProbe() {
+  pushSubscriptionsProbe = null;
+}

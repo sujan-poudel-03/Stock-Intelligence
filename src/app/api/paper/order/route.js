@@ -6,6 +6,7 @@ import { getVerifiedPrice } from '@/lib/marketProviders';
 import { paperTradingReady } from '@/lib/schemaFlags';
 import { previewOrder, isWholeQty, STARTING_CASH } from '@/lib/paperTrade';
 import { buildPaperSummary, ensurePaperAccount } from '@/lib/paperSummary';
+import { normalizeExchange, DEFAULT_EXCHANGE } from '@/lib/exchanges';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -38,10 +39,24 @@ export const POST = withGuard(async (request) => {
   if (side !== 'BUY' && side !== 'SELL') return NextResponse.json({ error: 'side must be BUY or SELL' }, { status: 400 });
   if (!isWholeQty(qty)) return NextResponse.json({ error: 'quantity must be a whole number of shares (> 0)' }, { status: 400 });
 
+  // NEPSE-only v1 — the money-math engine (charges.js: brokerage slabs, DP fee,
+  // CGT rates) is NEPSE-specific with no NYSE equivalent yet, so an order for any
+  // other exchange is explicitly REJECTED rather than silently filled and
+  // mislabeled as NEPSE (which would show wrong currency/charges once NYSE trading
+  // is ever enabled — currently moot since the exchange switcher keeps NYSE
+  // disabled, but this fails closed instead of relying on that staying true).
+  const exchange = normalizeExchange(body?.exchange || DEFAULT_EXCHANGE);
+  if (exchange !== 'NEPSE') {
+    return NextResponse.json(
+      { error: 'Paper trading is NEPSE-only for now — NYSE paper trading is not built yet.' },
+      { status: 422 }
+    );
+  }
+
   // --- ground-truth fill price — FAIL CLOSED -----------------------------------
-  // NEPSE-only v1. The ONLY price source; a wrong/unverified quote must never fill.
+  // The ONLY price source; a wrong/unverified quote must never fill.
   let verified;
-  try { verified = await getVerifiedPrice(symbol, { exchange: 'NEPSE' }); }
+  try { verified = await getVerifiedPrice(symbol, { exchange }); }
   catch { verified = null; }
   const price = Number(verified?.price);
   if (!verified?.verified || !Number.isFinite(price) || price <= 0) {
@@ -63,7 +78,7 @@ export const POST = withGuard(async (request) => {
   if (posErr) throw posErr;
   const openPositions = openRows || [];
   const position = openPositions.find(
-    (p) => String(p.symbol || '').toUpperCase() === symbol && String(p.exchange || 'NEPSE').toUpperCase() === 'NEPSE'
+    (p) => String(p.symbol || '').toUpperCase() === symbol && normalizeExchange(p.exchange) === exchange
   ) || null;
 
   const holdDays = position?.opened_at
@@ -91,7 +106,7 @@ export const POST = withGuard(async (request) => {
     if (np.opened) {
       const { error } = await supabase.from('paper_positions').insert({
         user_id: user.id,
-        exchange: 'NEPSE',
+        exchange,
         symbol,
         qty: np.qty,
         buy_price: np.buy_price,

@@ -212,10 +212,14 @@ export async function loadPaper() {
   }
 }
 
-// submitPaperOrder({ symbol, side, qty }) -> { ok, summary } | { error } (throws on reject
-// so the caller can toast the exact reason: insufficient cash / oversell / caps / no price).
-export async function submitPaperOrder({ symbol, side, qty }) {
-  const res = await api('/api/paper/order', { method: 'POST', body: { symbol, side, qty } });
+// submitPaperOrder({ symbol, side, qty, exchange }) -> { ok, summary } | { error }
+// (throws on reject so the caller can toast the exact reason: insufficient cash /
+// oversell / caps / no price / unsupported exchange). exchange is threaded through
+// so the server can reject a non-NEPSE order explicitly rather than silently
+// mislabeling it — see /api/paper/order (paper trading is NEPSE-only v1; the
+// money-math engine in charges.js is NEPSE-rate and has no NYSE equivalent yet).
+export async function submitPaperOrder({ symbol, side, qty, exchange }) {
+  const res = await api('/api/paper/order', { method: 'POST', body: { symbol, side, qty, exchange } });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(d.error || 'order rejected');
   return d;
@@ -258,12 +262,64 @@ const EMPTY_ALERTS = { channels: {}, thresholds: {} };
 export async function loadAlertPrefs(mode) {
   if (mode === 'api') {
     const res = await api('/api/alerts');
-    if (!res.ok) return { ...EMPTY_ALERTS };
+    if (!res.ok) return { ...EMPTY_ALERTS, telegramLinked: false };
     const d = await res.json();
-    return { channels: d.channels || {}, thresholds: d.thresholds || {} };
+    return { channels: d.channels || {}, thresholds: d.thresholds || {}, telegramLinked: !!d.telegramLinked };
   }
-  if (mode === 'local') return lsGet(LS_ALERTS, { ...EMPTY_ALERTS });
-  return { ...EMPTY_ALERTS };
+  if (mode === 'local') return { ...lsGet(LS_ALERTS, { ...EMPTY_ALERTS }), telegramLinked: false }; // local/open mode has no per-user bot chat to link
+  return { ...EMPTY_ALERTS, telegramLinked: false };
+}
+
+// requestTelegramLink() -> { code, expiresAt, botUsername } | throws
+export async function requestTelegramLink() {
+  const res = await api('/api/alerts/telegram/link', { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not start Telegram linking');
+  return d;
+}
+
+// unlinkTelegram() -> true | throws
+export async function unlinkTelegram() {
+  const res = await api('/api/alerts/telegram/unlink', { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not unlink Telegram');
+  return true;
+}
+
+// ---- browser push (capture-only for now — see src/lib/pushSubscriptions.js) --
+// GLOBAL/public read (no auth) — a VAPID public key is safe to expose.
+export async function getPushPublicKey() {
+  try {
+    const res = await fetch('/api/push/vapid-public-key', { cache: 'no-store' });
+    const d = await res.json();
+    return d.enabled ? d.publicKey : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPushStatus() {
+  try {
+    const res = await api('/api/push/status');
+    const d = await res.json();
+    return !!d.subscribed;
+  } catch {
+    return false;
+  }
+}
+
+export async function subscribePush(subscription) {
+  const res = await api('/api/push/subscribe', { method: 'POST', body: { subscription } });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not subscribe');
+  return true;
+}
+
+export async function unsubscribePush(endpoint) {
+  const res = await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint } });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || 'Could not unsubscribe');
+  return true;
 }
 
 export async function saveAlertPrefs(mode, prefs) {

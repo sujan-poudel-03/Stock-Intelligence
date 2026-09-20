@@ -7,6 +7,7 @@ import { resolveMinTurnover, filterLiquidSymbols, illiquidityOf, MIN_TURNOVER_NP
 import { getSupabase } from './supabase.js';
 import { getActiveAdjustment } from './corporateActions.js';
 import { corporateActionsReady } from './schemaFlags.js';
+import { recordPricePoint } from './priceHistory.js';
 
 // ---------------------------------------------------------------------------
 // scanMarket(exchange): fetch the exchange's index, gainers, losers, turnover via
@@ -188,6 +189,14 @@ export async function scanOneStock(symbol, marketData = {}, weights = null, know
     throw new Error(`no data from source: ${symbol}`);
   }
   const price = verified.price;
+
+  // Chart foundation (redesign Phase A): record today's verified bar. Best-effort,
+  // gated on the price_history schema-flag probe, and never throws into the scan —
+  // see src/lib/priceHistory.js. Needs the service client (RLS write path); a caller
+  // that doesn't pass one (e.g. the dev-run route) simply skips recording.
+  if (opts.supabase) {
+    await recordPricePoint(opts.supabase, { symbol, exchange, verified });
+  }
 
   const weightContext = weights != null ? weights : await getWeightContext(symbol, null, exchange);
   const knowledgeContext = knowledge != null ? knowledge : await getKnowledgeContext(symbol, null, exchange);
