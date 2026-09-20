@@ -60,6 +60,12 @@ export async function notify({ title, text }, env = process.env) {
   return { channels: chans.map((c) => c.id), delivered };
 }
 
+// The educational framing every user-facing signal/brief must carry (CLAUDE.md
+// guardrail #2) — the ONE canonical wording, shared by the operator digest below
+// and the per-user alert bodies in alertDelivery.js, so a future wording change
+// (e.g. after the SEBON legal review) only needs to happen in one place.
+export const DISCLAIMER = 'Educational, not financial advice · past performance ≠ future results.';
+
 // Build a scan digest message (pure — unit-tested). Doubles as the daily-brief
 // delivery AND the partial/failed health alert.
 export function formatScanDigest({ status, brief = {}, signals = 0, actionable = 0, failed = 0, skipped = 0 }) {
@@ -70,7 +76,7 @@ export function formatScanDigest({ status, brief = {}, signals = 0, actionable =
   if (Array.isArray(brief.topPicks) && brief.topPicks.length) lines.push(`Top picks: ${brief.topPicks.join(', ')}`);
   lines.push(`${signals} signal${signals === 1 ? '' : 's'} · ${actionable} actionable`);
   if (failed || skipped) lines.push(`⚠️ ${failed} failed, ${skipped} skipped this run`);
-  lines.push('Educational, not financial advice.');
+  lines.push(DISCLAIMER);
   return { title, text: lines.join('\n') };
 }
 

@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
-import { withGuard } from '@/lib/respond';
+import { withGuard, unauthorized } from '@/lib/respond';
 import { removeSubscription } from '@/lib/pushSubscriptions';
 
 export const dynamic = 'force-dynamic';
-
-function unauthorized() {
-  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-}
 
 // POST /api/push/unsubscribe { endpoint } -> { ok: true } | { error }
 export const POST = withGuard(async (request) => {

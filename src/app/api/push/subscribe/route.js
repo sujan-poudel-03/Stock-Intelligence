@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
-import { withGuard } from '@/lib/respond';
+import { withGuard, unauthorized } from '@/lib/respond';
 import { saveSubscription } from '@/lib/pushSubscriptions';
 
 export const dynamic = 'force-dynamic';
-
-function unauthorized() {
-  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-}
 
 // POST /api/push/subscribe { subscription } -> { ok: true } | { error }
 // Owner-scoped, same pattern as /api/alerts. `subscription` is the raw object

@@ -1,6 +1,6 @@
 import { normalizeExchange, DEFAULT_EXCHANGE } from './exchanges.js';
 import { alertDeliveryReady, outcomeDeliveryReady, telegramLinkReady } from './schemaFlags.js';
-import { deliverEmail, deliverTelegramDM, deliverPush } from './notify.js';
+import { deliverEmail, deliverTelegramDM, deliverPush, DISCLAIMER } from './notify.js';
 import { listUserEmailMap } from './userDirectory.js';
 import { listSubscriptionsByUser, removeSubscription } from './pushSubscriptions.js';
 import { logEvent } from './events.js';
@@ -11,9 +11,6 @@ import { logEvent } from './events.js';
 // (TARGET_HIT/SL_BREACH) alerts to watchers. A user's alerts are a FILTER over the
 // SHARED signals — NEVER a re-fetch/re-scan (the "market data is GLOBAL" guardrail).
 // Every path is best-effort and wrapped so it can NEVER throw into the scan/outcome flow.
-
-// The educational framing every user-facing signal/brief must carry.
-const DISCLAIMER = 'Educational, not financial advice · past performance ≠ future results.';
 
 // Cap on how many per-user emails a single brief run sends inline, so a broad flip day
 // can't blow the 60s Vercel budget with a synchronous fan-out. Users beyond the cap are
@@ -46,6 +43,44 @@ async function sendPushToUser(supabase, userId, subsByUser, { title, text }) {
       }
     }
   }
+  return delivered;
+}
+
+// sendAllChannels: attempt every channel this user has enabled — email, Telegram
+// DM, browser push — each in its own try/catch so one channel's failure never
+// blocks another. Returns true if AT LEAST ONE channel delivered. Shared by both
+// per-user delivery paths below (signal-flip alerts and outcome alerts): they
+// differ only in WHAT triggers a send and how the ledger is recorded afterward,
+// never in HOW a message reaches a user, so that part lives here exactly once.
+// `prefs` is the normalized shape { channels, thresholds, telegramChatId }.
+async function sendAllChannels(supabase, uid, prefs, { subject, text }, { emailMap, pushSubsByUser }) {
+  let delivered = false;
+
+  if (prefs?.channels?.email) {
+    try {
+      const to = emailMap.get(uid);
+      if (to) {
+        const sent = await deliverEmail({ to, subject, text });
+        if (sent) delivered = true;
+      }
+    } catch (err) {
+      console.error(`per-user email delivery failed (user_id ${uid}):`, err?.message || err);
+    }
+  }
+
+  if (prefs?.channels?.telegram && prefs?.telegramChatId) {
+    try {
+      const sent = await deliverTelegramDM({ chatId: prefs.telegramChatId, text: subject + '\n\n' + text });
+      if (sent) delivered = true;
+    } catch (err) {
+      console.error(`per-user telegram delivery failed (user_id ${uid}):`, err?.message || err);
+    }
+  }
+
+  if (prefs?.channels?.push) {
+    if (await sendPushToUser(supabase, uid, pushSubsByUser, { title: subject, text })) delivered = true;
+  }
+
   return delivered;
 }
 
@@ -268,9 +303,8 @@ export async function deliverSignalAlerts(supabase, { scanId, exchange } = {}) {
       deliverable = deliverable.slice(0, MAX_INLINE_ALERT_SENDS);
     }
 
-    // 7. Resolve emails + send ONE aggregated message per user per enabled channel
-    // (each channel attempt in its own try/catch — an email failure must never
-    // block that same user's Telegram DM or vice versa).
+    // 7. Resolve emails + send ONE aggregated message per user across every
+    // enabled channel (sendAllChannels — email/Telegram/push, each independent).
     const sentKeys = new Set(); // cursor keys delivered on AT LEAST ONE channel -> stamp sent_at
     if (deliverable.length) {
       const emailMap = await listUserEmailMap(supabase);
@@ -279,32 +313,7 @@ export async function deliverSignalAlerts(supabase, { scanId, exchange } = {}) {
       for (const [uid, userEvents] of deliverable) {
         const prefs = prefsByUser.get(uid);
         const { subject, text } = formatUserAlert(null, userEvents, ex);
-        let delivered = false;
-
-        if (prefs?.channels?.email) {
-          try {
-            const to = emailMap.get(uid);
-            if (to) {
-              const sent = await deliverEmail({ to, subject, text });
-              if (sent) delivered = true;
-            }
-          } catch (err) {
-            console.error(`per-user email delivery failed (user_id ${uid}):`, err?.message || err);
-          }
-        }
-
-        if (prefs?.channels?.telegram && prefs?.telegramChatId) {
-          try {
-            const sent = await deliverTelegramDM({ chatId: prefs.telegramChatId, text: subject + '\n\n' + text });
-            if (sent) delivered = true;
-          } catch (err) {
-            console.error(`per-user telegram delivery failed (user_id ${uid}):`, err?.message || err);
-          }
-        }
-
-        if (prefs?.channels?.push) {
-          if (await sendPushToUser(supabase, uid, pushSubsByUser, { title: subject, text })) delivered = true;
-        }
+        const delivered = await sendAllChannels(supabase, uid, prefs, { subject, text }, { emailMap, pushSubsByUser });
 
         if (delivered) {
           for (const e of userEvents) sentKeys.add(cursorKey(uid, ex, e.symbol));
@@ -365,13 +374,17 @@ export async function deliverOutcomeAlert(supabase, { sig, outcome, exitPrice, l
       .from('alert_prefs')
       .select(hasTelegramLink ? 'user_id, channels, thresholds, telegram_chat_id' : 'user_id, channels, thresholds')
       .in('user_id', userIds);
+    // Normalized to the same { channels, thresholds, telegramChatId } shape
+    // deliverSignalAlerts uses, so both share sendAllChannels below.
     const prefsByUser = new Map();
-    for (const p of prefRows || []) prefsByUser.set(p.user_id, p);
+    for (const p of prefRows || []) {
+      prefsByUser.set(p.user_id, { channels: p.channels || {}, thresholds: p.thresholds || {}, telegramChatId: p.telegram_chat_id || null });
+    }
     const wantKey = direction === 'SELL' ? 'onSell' : 'onBuy';
     const interested = userIds.filter((uid) => {
       const p = prefsByUser.get(uid);
       if (!p?.thresholds?.[wantKey]) return false;
-      return !!p?.channels?.email || !!(p?.channels?.telegram && p?.telegram_chat_id) || !!p?.channels?.push;
+      return !!p?.channels?.email || !!(p?.channels?.telegram && p?.telegramChatId) || !!p?.channels?.push;
     });
     if (!interested.length) return;
 
@@ -392,34 +405,8 @@ export async function deliverOutcomeAlert(supabase, { sig, outcome, exitPrice, l
 
     const ledger = [];
     for (const uid of targets) {
-      const p = prefsByUser.get(uid);
-      let delivered = false;
-
-      if (p?.channels?.email) {
-        try {
-          const to = emailMap.get(uid);
-          if (to) {
-            const sent = await deliverEmail({ to, subject, text });
-            if (sent) delivered = true;
-          }
-        } catch (err) {
-          console.error(`per-user outcome email failed (user_id ${uid}):`, err?.message || err);
-        }
-      }
-
-      if (p?.channels?.telegram && p?.telegram_chat_id) {
-        try {
-          const sent = await deliverTelegramDM({ chatId: p.telegram_chat_id, text: subject + '\n\n' + text });
-          if (sent) delivered = true;
-        } catch (err) {
-          console.error(`per-user outcome telegram failed (user_id ${uid}):`, err?.message || err);
-        }
-      }
-
-      if (p?.channels?.push) {
-        if (await sendPushToUser(supabase, uid, pushSubsByUser, { title: subject, text })) delivered = true;
-      }
-
+      const prefs = prefsByUser.get(uid);
+      const delivered = await sendAllChannels(supabase, uid, prefs, { subject, text }, { emailMap, pushSubsByUser });
       if (delivered) ledger.push({ user_id: uid, signal_id: sig.id, sent_at: nowIso });
     }
     if (ledger.length) {

@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
-import { withGuard } from '@/lib/respond';
+import { withGuard, unauthorized } from '@/lib/respond';
 import { issueLinkCode } from '@/lib/telegramLink';
 
 export const dynamic = 'force-dynamic';
-
-function unauthorized() {
-  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-}
 
 // POST /api/alerts/telegram/link -> { code, expiresAt, botUsername } | { error }
 //

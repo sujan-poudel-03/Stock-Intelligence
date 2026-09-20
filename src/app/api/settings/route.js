@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
-import { withGuard } from '@/lib/respond';
+import { withGuard, unauthorized } from '@/lib/respond';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,10 +11,6 @@ export const dynamic = 'force-dynamic';
 // This is NOT the agent/discovery config: discovery depth, sector focus and
 // auto-add/remove shape the ONE global scan and are ADMIN-only, served by
 // /api/admin/settings. A regular user's "Settings" = these personal prefs.
-
-function unauthorized() {
-  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-}
 
 // GET /api/settings -> { prefs: {} }
 export const GET = withGuard(async (request) => {

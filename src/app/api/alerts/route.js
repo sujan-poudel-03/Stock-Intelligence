@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
 import { normalizeAlertPrefs } from '@/lib/alertPrefs';
-import { withGuard } from '@/lib/respond';
+import { withGuard, unauthorized } from '@/lib/respond';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,10 +12,6 @@ export const dynamic = 'force-dynamic';
 // belt-and-suspenders app-layer owner check). Which channels ping ME and which
 // signal directions trigger it — a thin per-user layer over the shared signals, NOT
 // the global channel wiring (that's admin, /api/admin/channels).
-
-function unauthorized() {
-  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-}
 
 // GET /api/alerts -> { channels: {email,telegram}, thresholds: {onBuy,onSell}, telegramLinked }
 export const GET = withGuard(async (request) => {

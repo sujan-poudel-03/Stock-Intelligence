@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
 import { normalizeExchange } from '@/lib/exchanges';
-import { withGuard } from '@/lib/respond';
+import { withGuard, unauthorized } from '@/lib/respond';
 import { getUserEntitlements, resolveWatchlistBlock } from '@/lib/entitlements';
 
 export const dynamic = 'force-dynamic';
@@ -11,10 +11,6 @@ export const dynamic = 'force-dynamic';
 // verify the bearer token -> derive user_id -> scope EVERY query by that user_id
 // (RLS is still OFF; this filter is what isolates users, and it survives RLS-on).
 // The UNION of all users' rows feeds the global scan universe (see cron/scan).
-
-function unauthorized() {
-  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-}
 
 // GET /api/watchlist?exchange=NEPSE -> { watchlist: [{ symbol, reason, last_signal, added_at }] }
 export const GET = withGuard(async (request) => {

@@ -286,7 +286,8 @@ export async function unlinkTelegram() {
   return true;
 }
 
-// ---- browser push (capture-only for now — see src/lib/pushSubscriptions.js) --
+// ---- browser push (subscribe/unsubscribe THIS device) -----------------------
+// Actual send-side delivery lives server-side (src/lib/notify.js deliverPush).
 // GLOBAL/public read (no auth) — a VAPID public key is safe to expose.
 export async function getPushPublicKey() {
   try {

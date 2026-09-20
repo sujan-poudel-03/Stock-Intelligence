@@ -137,7 +137,9 @@ function normalizeSig(s) {
 }
 
 // -- constants (from V1) ------------------------------------------------------
-var SIG_COLORS = { BUY: '#10b981', SELL: '#ef4444', WATCH: '#f59e0b', AVOID: '#64748b', HOLD: '#f59e0b', NEUTRAL: '#64748b' };
+// Single source of truth is dsColor.signal (src/design-system/tokens.js) — this
+// used to be its own separately-maintained literal copy of the same map.
+var SIG_COLORS = dsColor.signal;
 // Watchlist provenance colors. Owned-row sources (manual/discovered/holding) + the
 // GLOBAL curated-list sources (seed/admin/discovery/system) share this map.
 var SRC_COLORS = { discovered: '#a78bfa', holding: '#8b5cf6', discovery: '#a78bfa', admin: '#3b82f6', seed: '#10b981', system: '#10b981' };

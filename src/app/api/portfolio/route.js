@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/supabase';
 import { getUserFromRequest } from '@/lib/auth';
 import { normalizeExchange } from '@/lib/exchanges';
-import { withGuard } from '@/lib/respond';
+import { withGuard, unauthorized } from '@/lib/respond';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,10 +18,6 @@ export const dynamic = 'force-dynamic';
 //
 // NOTE: the portfolios schema has no free-text column, so the buy "basis" / sell
 // "reason" the UI collects is not persisted server-side (see PHASE2 report).
-
-function unauthorized() {
-  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-}
 
 const num = (v) => (v === '' || v == null || Number.isNaN(Number(v)) ? null : Number(v));
 

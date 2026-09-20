@@ -31,6 +31,13 @@ export function edgeCache(sMaxAge, swr = sMaxAge * 2) {
   return { 'Cache-Control': `public, s-maxage=${sMaxAge}, stale-while-revalidate=${swr}` };
 }
 
+// Shared 401 for every owner-scoped route (watchlist/portfolio/settings/alerts/
+// push/telegram-linking/...) — used to be an identical local function repeated in
+// each of those route files.
+export function unauthorized() {
+  return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
+}
+
 function mapError(err) {
   // Missing Supabase env vars (tagged in src/lib/supabase.js).
   if (err?.code === 'ENV_MISSING') {
