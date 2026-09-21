@@ -186,7 +186,19 @@ export async function scanOneStock(symbol, marketData = {}, weights = null, know
   // routes which sources + plausibility ceiling the verified layer uses.
   const verified = await getVerifiedPrice(symbol, { exchange, caFactor });
   if (!verified.verified) {
-    throw new Error(`no data from source: ${symbol}`);
+    // Carry the ACTUAL reconcile() rejection reason (e.g. 'disagreement:2.34%',
+    // 'implausible-move:15.2%', 'no-sane-quote') + which sources responded, so
+    // admin sees WHY a fetch failed, not just THAT it failed — see
+    // humanizeError.js, which turns this into a specific message on the
+    // Activity panel / failed-jobs list instead of a generic "unknown error".
+    const reason = verified.reason || 'unverified';
+    const sources = Array.isArray(verified.sources) && verified.sources.length ? ` (tried: ${verified.sources.join(',')})` : '';
+    // Per-source sanity-check detail (only present for a 'no-sane-quote' rejection) —
+    // e.g. {merolagani:non-positive-price} — the exact WHY behind an opaque reason.
+    const detail = Array.isArray(verified.detail) && verified.detail.length
+      ? ` {${verified.detail.map((d) => `${d.source}:${d.reason}`).join(',')}}`
+      : '';
+    throw new Error(`no data from source: ${symbol} [${reason}]${sources}${detail}`);
   }
   const price = verified.price;
 

@@ -105,7 +105,15 @@ describe('reconcile', () => {
 
   it('rejects when every quote is insane', () => {
     const r = reconcile([{ price: -1, source: 'a' }, { price: 0, source: 'b' }], { now: NOW });
-    expect(r).toEqual({ verified: false, reason: 'no-sane-quote', sources: ['a', 'b'] });
+    expect(r).toEqual({
+      verified: false,
+      reason: 'no-sane-quote',
+      sources: ['a', 'b'],
+      detail: [
+        { source: 'a', reason: 'non-positive-price' },
+        { source: 'b', reason: 'non-positive-price' },
+      ],
+    });
   });
 });
 
@@ -123,7 +131,7 @@ describe('verifiedPrice', () => {
       throw new Error('source down');
     };
     const r = await verifiedPrice('NABIL', { providers: [boom], now: NOW });
-    expect(r).toEqual({ verified: false, reason: 'no-sane-quote', sources: [] });
+    expect(r).toEqual({ verified: false, reason: 'no-sane-quote', sources: [], detail: [] });
   });
 
   it('rejects when no providers are configured', async () => {

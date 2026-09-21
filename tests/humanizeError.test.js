@@ -33,4 +33,33 @@ describe('humanizeError', () => {
     expect(out.kind).toBe('unknown');
     expect(out.message.length).toBeLessThanOrEqual(120);
   });
+
+  describe('verified-price rejections (scan.js scanOneStock -> marketData.js reconcile)', () => {
+    it('explains a source-disagreement rejection', () => {
+      const out = humanizeError('no data from source: NABIL [disagreement:2.34%] (tried: merolagani,sharesansar)');
+      expect(out.kind).toBe('price');
+      expect(out.message).toContain('NABIL');
+      expect(out.message).toContain('disagreed by 2.34%');
+      expect(out.message).toContain('tried: merolagani,sharesansar');
+    });
+
+    it('explains a no-sane-quote rejection with per-source detail', () => {
+      const out = humanizeError('no data from source: HBL [no-sane-quote] (tried: merolagani) {merolagani:non-positive-price}');
+      expect(out.kind).toBe('price');
+      expect(out.message).toContain('HBL');
+      expect(out.message).toContain('merolagani returned a zero/negative price');
+    });
+
+    it('explains an implausible-move detail', () => {
+      const out = humanizeError('no data from source: EBL [no-sane-quote] (tried: merolagani) {merolagani:implausible-move:15.2%}');
+      expect(out.message).toContain('moved 15.2% vs previous close (implausible)');
+    });
+
+    it('flags when no source responded at all', () => {
+      const out = humanizeError('no data from source: SCB [no-providers]');
+      expect(out.kind).toBe('price');
+      expect(out.message).toContain('no source responded');
+      expect(out.message).toContain('no price source is configured');
+    });
+  });
 });

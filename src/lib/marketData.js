@@ -76,7 +76,15 @@ export function reconcile(quotes, opts = {}) {
   const clean = (quotes || []).map((q) => normalizeQuote(q, q?.source)).filter(Boolean);
   const sane = clean.filter((q) => sanityCheck(q, o).ok);
 
-  if (sane.length === 0) return rej('no-sane-quote', clean.map(sourceOf));
+  // Diagnostic-only detail: WHY each source's quote failed its own sanity check
+  // (non-positive price / implausible move) — never influences what's accepted
+  // (the filter above is unchanged), it just makes a 'no-sane-quote' rejection
+  // explainable instead of opaque. Consumed by scan.js -> humanizeError.js so
+  // an admin sees the real reason a fetch failed, not a generic message.
+  if (sane.length === 0) {
+    const detail = clean.map((q) => ({ source: sourceOf(q), reason: sanityCheck(q, o).reason }));
+    return { verified: false, reason: 'no-sane-quote', sources: clean.map(sourceOf), detail };
+  }
 
   let price;
   let asOf;
